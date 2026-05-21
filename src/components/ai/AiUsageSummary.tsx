@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -32,17 +32,7 @@ export function AiUsageSummary({ className }: AiUsageSummaryProps) {
 
   const canViewUsage = user?.role === 'admin' || user?.role === 'manager';
 
-  useEffect(() => {
-    if (!canViewUsage) {
-      setError('AI колдонуу статистикасын көрүү үчүн менеджер же администратор уруксаты талап кылынат');
-      setIsLoading(false);
-      return;
-    }
-
-    loadUsageData();
-  }, [canViewUsage, timeRange]);
-
-  const loadUsageData = async () => {
+  const loadUsageData = useCallback(async () => {
     if (!canViewUsage) return;
 
     try {
@@ -59,7 +49,7 @@ export function AiUsageSummary({ className }: AiUsageSummaryProps) {
       });
 
       setUsageData(data);
-    } catch (err: any) {
+    } catch (err: unknown) {
       const errorInfo = getAiErrorMessage(err, {
         fallbackTitle: 'AI колдонуу статистикасы катасы',
         fallbackDescription: 'AI колдонуу статистикасын жүктөө мүмкүн болгон жок. Кийинчиреп кайта аракет кылыңыз.',
@@ -74,7 +64,17 @@ export function AiUsageSummary({ className }: AiUsageSummaryProps) {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  };
+  }, [canViewUsage, timeRange, toast]);
+
+  useEffect(() => {
+    if (!canViewUsage) {
+      setError('AI колдонуу статистикасын көрүү үчүн менеджер же администратор уруксаты талап кылынат');
+      setIsLoading(false);
+      return;
+    }
+
+    loadUsageData();
+  }, [canViewUsage, loadUsageData]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);

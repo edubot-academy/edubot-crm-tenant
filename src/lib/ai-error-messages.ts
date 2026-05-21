@@ -3,6 +3,18 @@ interface AiErrorContext {
   fallbackDescription?: string;
 }
 
+type AiErrorPayload = {
+  code?: string | number;
+  errorCode?: string | number;
+  status?: string | number;
+  message?: string;
+  description?: string;
+  features?: unknown;
+  error?: {
+    message?: string;
+  };
+};
+
 export interface AiErrorMapping {
   [key: string]: {
     title: string;
@@ -131,7 +143,7 @@ const AI_ERROR_MAPPINGS: AiErrorMapping = {
 /**
  * Get user-friendly error message for AI-related errors
  */
-export function getAiErrorMessage(error: any, context: AiErrorContext = {}): { title: string; description: string; userAction?: string } {
+export function getAiErrorMessage(error: unknown, context: AiErrorContext = {}): { title: string; description: string; userAction?: string } {
   // Default fallback values
   const fallback = {
     title: context.fallbackTitle || 'AI катасы',
@@ -150,13 +162,15 @@ export function getAiErrorMessage(error: any, context: AiErrorContext = {}): { t
   if (typeof error === 'string') {
     errorMessage = error;
   } else if (error && typeof error === 'object') {
-    errorCode = error.code || error.errorCode || error.status;
-    errorMessage = error.message || error.description || error.error?.message;
+    const payload = error as AiErrorPayload;
+    const rawCode = payload.code ?? payload.errorCode ?? payload.status;
+    errorCode = rawCode == null ? null : String(rawCode);
+    errorMessage = payload.message || payload.description || payload.error?.message || null;
   }
 
   // Explicit FEATURE_DISABLED handling to avoid broad substring matching
-  if (errorCode === 'FEATURE_DISABLED' && Array.isArray(error?.features)) {
-    const features: string[] = error.features;
+  if (errorCode === 'FEATURE_DISABLED' && error && typeof error === 'object' && Array.isArray((error as AiErrorPayload).features)) {
+    const features = (error as { features: string[] }).features;
     if (features.includes('ai_assist_enabled')) {
       return AI_ERROR_MAPPINGS['ai_assist_disabled'];
     }
@@ -193,7 +207,7 @@ export function getAiErrorMessage(error: any, context: AiErrorContext = {}): { t
 /**
  * Check if an error is recoverable (user can retry)
  */
-export function isAiErrorRecoverable(error: any): boolean {
+export function isAiErrorRecoverable(error: unknown): boolean {
   const { title } = getAiErrorMessage(error);
 
   const recoverablePatterns = [
@@ -212,7 +226,7 @@ export function isAiErrorRecoverable(error: any): boolean {
 /**
  * Get suggested retry delay in milliseconds
  */
-export function getAiErrorRetryDelay(error: any): number {
+export function getAiErrorRetryDelay(error: unknown): number {
   const { title } = getAiErrorMessage(error);
   const titleLower = title.toLowerCase();
 
@@ -234,7 +248,7 @@ export function getAiErrorRetryDelay(error: any): number {
 /**
  * Format AI error for toast notifications
  */
-export function formatAiErrorForToast(error: any, context: AiErrorContext = {}) {
+export function formatAiErrorForToast(error: unknown, context: AiErrorContext = {}) {
   const errorInfo = getAiErrorMessage(error, context);
 
   return {

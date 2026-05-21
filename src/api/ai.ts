@@ -181,6 +181,13 @@ const isKnownNextBestActionKey = (actionKey: string | undefined): boolean => {
   return normalizeNextBestActionKey(actionKey) === actionKey;
 };
 
+export function isAiRateLimitError(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'status' in error
+    && (error as { status?: number }).status === 429;
+}
+
 export const aiApi = {
   // Release 1 - AI Follow-up Drafts
   draftFollowup: (data: DraftFollowupRequest): Promise<DraftFollowupResponse> => {

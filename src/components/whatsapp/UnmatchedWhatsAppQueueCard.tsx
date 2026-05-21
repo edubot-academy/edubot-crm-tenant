@@ -145,8 +145,9 @@ export function UnmatchedWhatsAppQueueCard() {
         if (!isMounted) return;
         setLinkResults([]);
       } finally {
-        if (!isMounted) return;
-        setIsSearchingLinks(false);
+        if (isMounted) {
+          setIsSearchingLinks(false);
+        }
       }
     }, 250);
 

@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { PageHeader } from '@/components/PageShell';
+import { PageError, PageHeader, PageLoading } from '@/components/PageShell';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { ky } from '@/lib/i18n';
 import { contactApi, bridgeApi } from '@/api/modules';
 import type { Contact } from '@/types';
@@ -236,14 +236,14 @@ export default function ContactDetailPage() {
   };
 
   if (isLoading) {
-    return <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
+    return <PageLoading />;
   }
 
   if (error || !contact) {
     return (
-      <div className="flex flex-col items-center justify-center h-64 gap-4">
-        <p className="text-muted-foreground">{error || 'Байланыш табылган жок'}</p>
-        <Button variant="outline" onClick={() => navigate('/contacts')}><ArrowLeft className="mr-2 h-4 w-4" />{ky.common.back}</Button>
+      <div className="space-y-6 animate-fade-in">
+        <PageHeader title="Байланыш" actions={<Button variant="outline" onClick={() => navigate('/contacts')}><ArrowLeft className="mr-2 h-4 w-4" />{ky.common.back}</Button>} />
+        <PageError message={error || 'Байланыш табылган жок'} onRetry={() => navigate('/contacts')} actionLabel="Тизмеге кайтуу" />
       </div>
     );
   }
@@ -283,75 +283,97 @@ export default function ContactDetailPage() {
               <Button className="h-9" variant="outline" onClick={() => navigate('/contacts')}>
                 <ArrowLeft className="mr-2 h-4 w-4" />{ky.common.back}
               </Button>
-              <Button className="h-9" variant="outline" onClick={() => setIsEditOpen(true)}>{ky.common.edit}</Button>
-              {isAiDraftsEnabled ? (
-                <Button className="h-9" variant="outline" onClick={() => setIsAiDraftOpen(true)}>
-                  <Sparkles className="mr-2 h-4 w-4" />
-                  AI жооп сунушу
-                </Button>
-              ) : null}
               <Button className="h-9" variant="outline" onClick={() => setIsScheduleOpen(true)}>
                 <Calendar className="mr-2 h-4 w-4" />
                 Пландоо
               </Button>
+              <div className="ml-1 flex items-center gap-2 rounded-full border border-border/70 bg-muted/20 px-2 py-1">
+                <Button className="h-8" variant="ghost" onClick={() => setIsEditOpen(true)}>{ky.common.edit}</Button>
+                {isAiDraftsEnabled ? (
+                  <Button className="h-8" variant="ghost" onClick={() => setIsAiDraftOpen(true)}>
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    AI жооп сунушу
+                  </Button>
+                ) : null}
+              </div>
             </div>
           </div>
         }
       />
-      <div className="grid items-start gap-6 lg:grid-cols-3">
+      <Card className="border-border/60 bg-card shadow-card">
+        <CardContent className="p-5">
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">Байланыш</Badge>
+                {bridgeData?.lmsStudentId ? <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">LMS менен байланышкан</Badge> : null}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <SummaryStat label="Телефон" value={contact.phone} icon={Phone} />
+                <SummaryStat label="Email" value={contact.email || 'Email жок'} icon={Mail} />
+                <SummaryStat label="Түзүлгөн күнү" value={formatDateTime(contact.createdAt)} icon={Calendar} />
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+              <ActionTile label={ky.common.phone} value={contact.phone} href={`tel:${contact.phone}`} icon={Phone} />
+              <ActionTile label={ky.common.email} value={contact.email || 'Email жок'} href={contact.email ? `mailto:${contact.email}` : undefined} icon={Mail} muted={!contact.email} />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(320px,1fr)]">
         {aiDraftMessage ? (
           <AiDraftHandoffCard
             value={aiDraftMessage}
             onChange={setAiDraftMessage}
             onClear={() => setAiDraftMessage('')}
-            className="lg:col-span-3"
+            className="xl:col-span-2"
           />
         ) : null}
 
-        <Card className="shadow-card border-border/50 lg:col-span-2">
-          <CardHeader><CardTitle className="text-base">{ky.contacts.infoTitle}</CardTitle></CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <InfoRow icon={User} label={ky.common.name} value={contact.fullName} />
-              <InfoRow icon={Phone} label={ky.common.phone} value={contact.phone} />
-              <InfoRow icon={Mail} label={ky.common.email} value={contact.email} />
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Release 2 - Communication Summary */}
-        {isAiOperationalIntelligenceEnabled && (
-          <div className="space-y-4 lg:col-span-1">
-            <CommunicationSummary
-              summary={communicationSummary || undefined}
-              targetType="contact"
-              targetId={Number(contact.id)}
-              onRefresh={refreshCommunicationSummary}
-              loading={summaryLoading}
-              error={summaryError}
+        <div className="space-y-6">
+          <Card className="shadow-card border-border/50">
+            <CardHeader><CardTitle className="text-base">{ky.contacts.infoTitle}</CardTitle></CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <InfoRow icon={User} label={ky.common.name} value={contact.fullName} />
+                <InfoRow icon={Phone} label={ky.common.phone} value={contact.phone} />
+                <InfoRow icon={Mail} label={ky.common.email} value={contact.email || '—'} />
+              </div>
+            </CardContent>
+          </Card>
+          {isLmsBridgeEnabled && canViewLmsTechnicalFields() && bridgeData ? (
+            <ContactStudentMapping
+              lmsStudentId={bridgeData.lmsStudentId}
+              externalStudentId={bridgeData.externalStudentId}
+              contactId={contact.id}
             />
-            {communicationSummary?.aiRequestId && (
-              <AiFeedbackControls
+          ) : null}
+        </div>
+
+        <div className="space-y-4 xl:sticky xl:top-6">
+          {isAiOperationalIntelligenceEnabled && (
+            <>
+              <CommunicationSummary
+                summary={communicationSummary || undefined}
                 targetType="contact"
                 targetId={Number(contact.id)}
-                feature="timeline_summary"
-                aiRequestId={communicationSummary.aiRequestId}
-                disabled={summaryLoading}
-                onFeedbackSubmit={handleAiFeedback}
+                onRefresh={refreshCommunicationSummary}
+                loading={summaryLoading}
+                error={summaryError}
               />
-            )}
-          </div>
-        )}
-
-        {isLmsBridgeEnabled && canViewLmsTechnicalFields() && bridgeData && (
-          <ContactStudentMapping
-            lmsStudentId={bridgeData.lmsStudentId}
-            externalStudentId={bridgeData.externalStudentId}
-            contactId={contact.id}
-          />
-        )}
-
-        <div className="space-y-4 lg:col-span-1">
+              {communicationSummary?.aiRequestId && (
+                <AiFeedbackControls
+                  targetType="contact"
+                  targetId={Number(contact.id)}
+                  feature="timeline_summary"
+                  aiRequestId={communicationSummary.aiRequestId}
+                  disabled={summaryLoading}
+                  onFeedbackSubmit={handleAiFeedback}
+                />
+              )}
+            </>
+          )}
           <Card className="shadow-card border-border/50">
             <CardHeader><CardTitle className="text-base">{ky.common.notes}</CardTitle></CardHeader>
             <CardContent>
@@ -556,43 +578,58 @@ export default function ContactDetailPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{ky.contacts.editTitle}</DialogTitle>
+            <DialogDescription>Байланыштын негизги маалыматын жаңыртыңыз. Өзгөрүүлөр карточкада дароо колдонулат.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>{ky.common.name} *</Label>
-              <Input
-                value={form.fullName}
-                onChange={(e) => setForm((prev) => ({ ...prev, fullName: e.target.value }))}
-                placeholder={ky.common.fullNamePlaceholder}
-              />
+          <div className="space-y-5">
+            <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+              <div className="mb-4">
+                <p className="text-sm font-semibold text-foreground">Негизги байланыш</p>
+                <p className="text-xs text-muted-foreground">Аты жана телефону талап кылынат.</p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>{ky.common.name} *</Label>
+                  <Input
+                    value={form.fullName}
+                    onChange={(e) => setForm((prev) => ({ ...prev, fullName: e.target.value }))}
+                    placeholder={ky.common.fullNamePlaceholder}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>{ky.common.phone} *</Label>
+                  <Input
+                    value={form.phone}
+                    onChange={(e) => setForm((prev) => ({ ...prev, phone: e.target.value }))}
+                    placeholder="+996 ..."
+                  />
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label>{ky.common.email}</Label>
+                  <Input
+                    type="email"
+                    value={form.email}
+                    onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
+                    placeholder={ky.common.emailPlaceholder}
+                  />
+                </div>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label>{ky.common.phone} *</Label>
-              <Input
-                value={form.phone}
-                onChange={(e) => setForm((prev) => ({ ...prev, phone: e.target.value }))}
-                placeholder="+996 ..."
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>{ky.common.email}</Label>
-              <Input
-                type="email"
-                value={form.email}
-                onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
-                placeholder={ky.common.emailPlaceholder}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>{ky.common.notes}</Label>
-              <Textarea
-                value={form.notes}
-                onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))}
-                placeholder={ky.common.notesPlaceholder}
-              />
+            <div className="rounded-2xl border border-border/60 p-4">
+              <div className="mb-4">
+                <p className="text-sm font-semibold text-foreground">Эскертүү</p>
+                <p className="text-xs text-muted-foreground">Команда үчүн пайдалуу контекстти ушул жерде сактаңыз.</p>
+              </div>
+              <div className="space-y-2">
+                <Label>{ky.common.notes}</Label>
+                <Textarea
+                  value={form.notes}
+                  onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))}
+                  placeholder={ky.common.notesPlaceholder}
+                />
+              </div>
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="border-t border-border/60 pt-4">
             <Button variant="outline" onClick={resetEditForm} disabled={isSaving}>
               {ky.common.cancel}
             </Button>
@@ -617,6 +654,31 @@ function InfoRow({ icon: Icon, label, value }: { icon: React.ElementType; label:
       </div>
     </div>
   );
+}
+
+function SummaryStat({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
+      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+        <Icon className="h-3.5 w-3.5" />
+        <span>{label}</span>
+      </div>
+      <p className="mt-2 text-sm font-semibold text-foreground">{value}</p>
+    </div>
+  );
+}
+
+function ActionTile({ icon: Icon, label, value, href, muted = false }: { icon: React.ElementType; label: string; value: string; href?: string; muted?: boolean }) {
+  const content = (
+    <div className="rounded-xl border border-border/60 bg-background p-3 transition-colors hover:bg-muted/20">
+      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+        <Icon className="h-3.5 w-3.5" />
+        <span>{label}</span>
+      </div>
+      <p className={`mt-2 text-sm font-semibold ${muted ? 'text-muted-foreground' : 'text-foreground'}`}>{value}</p>
+    </div>
+  );
+  return href ? <a href={href} className="block">{content}</a> : content;
 }
 
 function EnrollmentStatusBadge({ status }: { status: string }) {

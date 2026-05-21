@@ -172,7 +172,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
     return refreshPromise.current;
-  }, []);
+  }, [loadBootstrapData]);
 
   // Register the token provider with the API client
   useEffect(() => {

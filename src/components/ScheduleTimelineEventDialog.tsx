@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -108,39 +108,54 @@ export function ScheduleTimelineEventDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{form.type === 'call' ? 'Чалуу пландоо' : 'Жолугушуу пландоо'}</DialogTitle>
+          <DialogDescription>Кийинки байланышты так убакыт менен белгилеңиз. Бул окуя timeline'га дароо кошулат.</DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label>Түрү</Label>
-            <Select value={form.type} onValueChange={(value) => setForm((prev) => ({ ...prev, type: value as SchedulableType }))}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="call">Чалуу</SelectItem>
-                <SelectItem value="meeting">Жолугушуу</SelectItem>
-              </SelectContent>
-            </Select>
+        <div className="space-y-5">
+          <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+            <div className="mb-4">
+              <p className="text-sm font-semibold text-foreground">Пландоо</p>
+              <p className="text-xs text-muted-foreground">Окуя түрүн жана так убакытты тандаңыз.</p>
+            </div>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Түрү</Label>
+                <Select value={form.type} onValueChange={(value) => setForm((prev) => ({ ...prev, type: value as SchedulableType }))}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="call">Чалуу</SelectItem>
+                    <SelectItem value="meeting">Жолугушуу</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Пландалган убакыт</Label>
+                <Input
+                  type="datetime-local"
+                  value={form.scheduledAt}
+                  onChange={(e) => setForm((prev) => ({ ...prev, scheduledAt: e.target.value }))}
+                  required
+                />
+              </div>
+            </div>
           </div>
-          <div className="space-y-2">
-            <Label>Пландалган убакыт</Label>
-            <Input
-              type="datetime-local"
-              value={form.scheduledAt}
-              onChange={(e) => setForm((prev) => ({ ...prev, scheduledAt: e.target.value }))}
-              required
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Комментарий</Label>
-            <Textarea
-              value={form.message}
-              onChange={(e) => setForm((prev) => ({ ...prev, message: e.target.value }))}
-              placeholder="Кааласаңыз кыскача комментарий жазыңыз..."
-            />
+          <div className="rounded-2xl border border-border/60 p-4">
+            <div className="mb-4">
+              <p className="text-sm font-semibold text-foreground">Комментарий</p>
+              <p className="text-xs text-muted-foreground">Кааласаңыз кыскача даярдык же контекст кошуңуз.</p>
+            </div>
+            <div className="space-y-2">
+              <Label>Комментарий</Label>
+              <Textarea
+                value={form.message}
+                onChange={(e) => setForm((prev) => ({ ...prev, message: e.target.value }))}
+                placeholder="Кааласаңыз кыскача комментарий жазыңыз..."
+              />
+            </div>
           </div>
         </div>
-        <DialogFooter>
+        <DialogFooter className="border-t border-border/60 pt-4">
           <Button variant="outline" onClick={resetForm} disabled={isSaving}>
             {ky.common.cancel}
           </Button>

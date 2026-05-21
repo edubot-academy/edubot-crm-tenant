@@ -83,6 +83,10 @@ export function DataTable<T extends { id: number | string }>({
   mobileBoardEmptyMessage,
 }: DataTableProps<T>) {
   const isMobile = useIsMobile();
+  const isInteractiveTarget = (target: EventTarget | null) => {
+    if (!(target instanceof HTMLElement)) return false;
+    return Boolean(target.closest('button, a, input, select, textarea, [role="button"], [role="link"], [role="checkbox"], [data-radix-collection-item]'));
+  };
   const visiblePages = Array.from(
     { length: totalPages },
     (_, index) => index + 1,
@@ -208,11 +212,11 @@ export function DataTable<T extends { id: number | string }>({
         ) : (
           <div className="flex gap-4 overflow-x-auto pb-4 snap-x snap-mandatory scrollbar-thin">
             {groupedMobileBoardData.map((column) => (
-              <div key={column.id} className="w-80 shrink-0 snap-start">
-                <div className="mb-2 rounded-lg bg-muted/60 px-3 py-2">
+              <div key={column.id} className="w-[19rem] shrink-0 snap-start">
+                <div className="mb-2 rounded-2xl border border-border/60 bg-muted/20 px-3 py-2.5">
                   <div className="flex items-center justify-between gap-3">
                     <h3 className="text-sm font-semibold text-foreground">{column.title}</h3>
-                    <Badge variant="secondary" className="rounded-full">
+                    <Badge variant="secondary" className="rounded-full px-2.5 py-1">
                       {column.items.length}
                     </Badge>
                   </div>
@@ -229,9 +233,13 @@ export function DataTable<T extends { id: number | string }>({
                         role={onRowClick ? 'button' : undefined}
                         tabIndex={onRowClick ? 0 : undefined}
                         className={cn(onRowClick && 'cursor-pointer rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2')}
-                        onClick={() => onRowClick?.(item)}
+                        onClick={(e) => {
+                          if (!onRowClick || isInteractiveTarget(e.target)) return;
+                          onRowClick(item);
+                        }}
                         onKeyDown={(e) => {
                           if (!onRowClick) return;
+                          if (isInteractiveTarget(e.target)) return;
                           if (e.key === 'Enter' || e.key === ' ') {
                             e.preventDefault();
                             onRowClick(item);
@@ -356,9 +364,13 @@ export function DataTable<T extends { id: number | string }>({
                     key={item.id}
                     tabIndex={onRowClick ? 0 : undefined}
                     className={cn(onRowClick && 'cursor-pointer hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset')}
-                    onClick={() => onRowClick?.(item)}
+                    onClick={(e) => {
+                      if (!onRowClick || isInteractiveTarget(e.target)) return;
+                      onRowClick(item);
+                    }}
                     onKeyDown={(e) => {
                       if (!onRowClick) return;
+                      if (isInteractiveTarget(e.target)) return;
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
                         onRowClick(item);
@@ -390,16 +402,25 @@ export function DataTable<T extends { id: number | string }>({
 
       {/* Pagination */}
       {totalPages > 1 && onPageChange && (
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
-            {ky.common.showing} {page} {ky.common.of} {totalPages}
-          </p>
-          <div className="flex items-center gap-1">
+        <div className="flex flex-col gap-3 rounded-2xl border border-border/60 bg-card px-4 py-3 shadow-card sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-foreground">
+              {totalItems !== undefined
+                ? `${totalItems} ${totalItemsLabel || 'жазуу'}`
+                : `${ky.common.showing} ${page} ${ky.common.of} ${totalPages}`}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Барак {page} / {totalPages}
+            </p>
+          </div>
+          <div className="flex items-center gap-1 self-start sm:self-auto">
             <Button
               variant="outline"
               size="sm"
               onClick={() => onPageChange(page - 1)}
               disabled={page <= 1}
+              className="h-9 w-9 px-0"
+              aria-label="Мурунку бет"
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
@@ -416,7 +437,7 @@ export function DataTable<T extends { id: number | string }>({
                     variant={pageNumber === page ? 'default' : 'outline'}
                     size="sm"
                     onClick={() => onPageChange(pageNumber)}
-                    className="min-w-9"
+                    className="h-9 min-w-9"
                   >
                     {pageNumber}
                   </Button>
@@ -428,6 +449,8 @@ export function DataTable<T extends { id: number | string }>({
               size="sm"
               onClick={() => onPageChange(page + 1)}
               disabled={page >= totalPages}
+              className="h-9 w-9 px-0"
+              aria-label="Кийинки бет"
             >
               <ChevronRight className="h-4 w-4" />
             </Button>

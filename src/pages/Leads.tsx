@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { formatDate } from '@/lib/formatting';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { ky } from '@/lib/i18n';
 import { leadsApi, usersApi } from '@/api/modules';
@@ -28,7 +28,8 @@ import { LmsCourseContextFields } from '@/components/lms/LmsCourseContextFields'
 import { leadInterestLevelLabels } from '@/lib/lms-formatting';
 import { ListPriorityIndicator, PriorityScore, RiskScore } from '@/components/ai/PriorityIndicator';
 import { useFeatureFlags } from '@/components/core/FeatureFlagProvider';
-import { aiApi, type LeadPriorityScoreResult, type RiskScoreResult } from '@/api/ai';
+import { aiApi, isAiRateLimitError, type LeadPriorityScoreResult, type RiskScoreResult } from '@/api/ai';
+import { runWithConcurrencyLimit } from '@/lib/async';
 
 type LeadFormState = Omit<Lead, 'id' | 'createdAt' | 'updatedAt' | 'assignedManager' | 'company' | 'source' | 'courseType' | 'interestLevel'> & {
   source?: LeadSource;
@@ -139,7 +140,7 @@ export default function LeadsPage() {
   const [duplicateCheck, setDuplicateCheck] = useState<{ hasDuplicate: boolean; duplicateFields?: string[]; existingLead?: Lead } | null>(null);
   const [isCheckingDuplicates, setIsCheckingDuplicates] = useState(false);
   const duplicateCheckRequestRef = useRef(0);
-  const didMountFilterStateRef = useRef(false);
+  const fetchRequestRef = useRef(0);
   const shouldOpenCreate = searchParams.get('create') === '1';
 
   const clearCreateParam = () => {
@@ -151,6 +152,7 @@ export default function LeadsPage() {
   };
 
   const fetchLeads = useCallback(() => {
+    const requestId = ++fetchRequestRef.current;
     setIsLoading(true);
     setError(null);
     leadsApi.list({
@@ -164,20 +166,25 @@ export default function LeadsPage() {
       limit: 20,
     })
       .then(async (res) => {
+        if (requestId !== fetchRequestRef.current) return;
         setLeads(res.items);
         setTotalItems(res.total || 0);
         setTotalPages(Math.max(res.totalPages || 1, 1));
+        setIsLoading(false);
 
         // Load priority and risk data if AI operational intelligence is enabled
         if (isAiOperationalIntelligenceEnabled && res.items.length > 0) {
           setPriorityLoading(true);
           const priorities: Record<number, PriorityScore> = {};
           const risks: Record<number, RiskScore> = {};
+          let priorityRateLimitHit = false;
+          let riskRateLimitHit = false;
 
-          await Promise.allSettled(
-            res.items.map(async (lead) => {
+          await runWithConcurrencyLimit(res.items, 2, async (lead) => {
+            if (requestId !== fetchRequestRef.current) return;
+
+            if (!priorityRateLimitHit) {
               try {
-                // Load priority score
                 const priorityData = await aiApi.getPriorityScore('lead', lead.id);
                 priorities[lead.id] = {
                   score: priorityData.score.score,
@@ -193,50 +200,62 @@ export default function LeadsPage() {
                   tier: priorityData.score.tier,
                 };
               } catch (err) {
-                console.warn(`Failed to load priority for lead ${lead.id}:`, err);
+                if (isAiRateLimitError(err)) {
+                  priorityRateLimitHit = true;
+                } else {
+                  console.warn(`Failed to load priority for lead ${lead.id}:`, err);
+                }
               }
+            }
 
-              try {
-                // Load risk score
+            if (requestId !== fetchRequestRef.current || riskRateLimitHit) return;
+
+            try {
                 const riskData = await aiApi.getRiskScore('lead', lead.id);
                 risks[lead.id] = {
                   risk: riskData.risk,
                   reasons: riskData.reasons,
                   score: riskData.score,
                 };
-              } catch (err) {
+            } catch (err) {
+              if (isAiRateLimitError(err)) {
+                riskRateLimitHit = true;
+              } else {
                 console.warn(`Failed to load risk for lead ${lead.id}:`, err);
               }
-            })
-          );
+            }
+          });
 
+          if (requestId !== fetchRequestRef.current) return;
           setLeadPriorities(priorities);
           setLeadRisks(risks);
+          setPriorityLoading(false);
+        } else {
+          setLeadPriorities({});
+          setLeadRisks({});
           setPriorityLoading(false);
         }
       })
       .catch(() => {
+        if (requestId !== fetchRequestRef.current) return;
         setLeads([]);
         setTotalItems(0);
         setTotalPages(1);
         setLeadPriorities({});
         setLeadRisks({});
+        setPriorityLoading(false);
         setError('Лиддерди жүктөө мүмкүн болгон жок. Тармакты же фильтрлерди текшериңиз.');
       })
-      .finally(() => setIsLoading(false));
+      .finally(() => {
+        if (requestId === fetchRequestRef.current) {
+          setIsLoading(false);
+        }
+      });
   }, [page, search, statusFilter, managerFilter, dateFilter, customFromDate, customToDate, isAiOperationalIntelligenceEnabled]);
 
   useEffect(() => {
     fetchLeads();
   }, [fetchLeads]);
-
-  useEffect(() => {
-    if (!didMountFilterStateRef.current) {
-      didMountFilterStateRef.current = true;
-      return;
-    }
-    setPage(1);
-  }, [search, statusFilter, managerFilter, dateFilter, customFromDate, customToDate]);
 
   useEffect(() => {
     const nextSearch = searchParams.get('q') ?? '';
@@ -292,7 +311,7 @@ export default function LeadsPage() {
       setManagers(user ? [{ id: user.id, fullName: user.fullName || user.email, role: user.role }] : []);
       return;
     }
-    usersApi.assignables({ roles: 'sales' })
+    usersApi.assignables()
       .then((items) => {
         if (!user) {
           setManagers(items);
@@ -319,7 +338,7 @@ export default function LeadsPage() {
       return;
     }
 
-    usersApi.assignables({ roles: 'sales' })
+    usersApi.assignables()
       .then((items) => {
         const hasCurrentUser = items.some((item) => item.id === user.id);
         setManagerFilterOptions(
@@ -332,6 +351,40 @@ export default function LeadsPage() {
         setManagerFilterOptions([{ id: user.id, fullName: user.fullName || user.email, role: user.role }]);
       });
   }, [canAssignToSales, user]);
+
+  const updateSearch = (value: string) => {
+    setSearch(value);
+    setPage(1);
+  };
+
+  const updateStatusFilter = (value: string) => {
+    setStatusFilter(value);
+    setPage(1);
+  };
+
+  const updateManagerFilter = (value: string) => {
+    setManagerFilter(value);
+    setPage(1);
+  };
+
+  const updateDateFilter = (value: string) => {
+    setDateFilter(value);
+    if (value !== 'custom') {
+      setCustomFromDate('');
+      setCustomToDate('');
+    }
+    setPage(1);
+  };
+
+  const updateCustomFromDate = (value: string) => {
+    setCustomFromDate(value);
+    setPage(1);
+  };
+
+  const updateCustomToDate = (value: string) => {
+    setCustomToDate(value);
+    setPage(1);
+  };
 
   const checkForDuplicates = useCallback(async (phone: string, email?: string) => {
     const normalizedPhone = phone.trim();
@@ -535,21 +588,21 @@ export default function LeadsPage() {
       ? [{
         key: 'search',
         label: `Издөө: ${search.trim()}`,
-        onRemove: () => setSearch(''),
+        onRemove: () => updateSearch(''),
       }]
       : []),
     ...(statusFilter !== 'all'
       ? [{
         key: 'status',
         label: `Статус: ${leadStatusOptions.find(opt => opt.value === statusFilter)?.label || statusFilter}`,
-        onRemove: () => setStatusFilter('all'),
+        onRemove: () => updateStatusFilter('all'),
       }]
       : []),
     ...(managerFilter !== 'all'
       ? [{
         key: 'manager',
         label: `Менеджер: ${managerFilterOptions.find((manager) => String(manager.id) === managerFilter)?.fullName || managerFilter}`,
-        onRemove: () => setManagerFilter('all'),
+        onRemove: () => updateManagerFilter('all'),
       }]
       : []),
     ...(dateFilter !== 'all'
@@ -561,9 +614,7 @@ export default function LeadsPage() {
             : 'Күн: өзүңүз тандаңыз'
           : `Күн: ${ky.dateRange[dateFilter as keyof typeof ky.dateRange]}`,
         onRemove: () => {
-          setDateFilter('all');
-          setCustomFromDate('');
-          setCustomToDate('');
+          updateDateFilter('all');
         },
       }]
       : []),
@@ -650,12 +701,11 @@ export default function LeadsPage() {
 
     return (
       <div
-        className="w-full rounded-xl border bg-background p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+        className="w-full rounded-2xl border border-border/60 bg-background p-3 text-left shadow-sm transition hover:border-border hover:shadow-md"
       >
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-foreground">{lead.fullName || '—'}</p>
-            <div className="mt-0.5 flex items-center gap-2">
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="flex items-center gap-2">
               <StatusBadge variant={getLeadStatusVariant(status)} dot className="text-[11px]">
                 {leadStatusOptions.find(opt => opt.value === status)?.label || status}
               </StatusBadge>
@@ -663,6 +713,7 @@ export default function LeadsPage() {
                 <span className="text-[11px] text-muted-foreground">{ky.leadSource[lead.source]}</span>
               )}
             </div>
+            <p className="truncate text-sm font-semibold text-foreground">{lead.fullName || '—'}</p>
           </div>
         </div>
 
@@ -686,28 +737,29 @@ export default function LeadsPage() {
             </a>
           )}
         </div>
-        <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
           <User className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate">{lead.assignedManager?.fullName || ky.common.notAssigned}</span>
-          {lead.tags && lead.tags.length > 0 && (
-            <span className="ml-auto flex gap-1">
-              {lead.tags.slice(0, 2).map((tag) => (
-                <span key={tag} className="rounded-full bg-secondary px-1.5 py-0.5 text-[10px]">{tag}</span>
-              ))}
-            </span>
-          )}
         </div>
 
-        <div className="mt-2 flex items-center gap-1.5 border-t pt-2">
+        {lead.tags && lead.tags.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {lead.tags.slice(0, 2).map((tag) => (
+              <span key={tag} className="rounded-full bg-secondary px-2 py-0.5 text-[10px] text-secondary-foreground">{tag}</span>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-3 border-t border-border/60 pt-2.5">
           {quickActions.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 flex-1">
+            <div className="mb-2 flex flex-wrap gap-1.5">
               {quickActions.map((action) => (
                 <Button
                   key={action.value}
                   variant="secondary"
                   size="sm"
                   disabled={updatingLeadId === lead.id}
-                  className="h-7 text-xs"
+                  className="h-7 rounded-full px-2.5 text-[11px]"
                   onClick={(e) => {
                     e.stopPropagation();
                     handleStatusChange(lead, action.value);
@@ -719,115 +771,39 @@ export default function LeadsPage() {
               ))}
             </div>
           )}
-          {isLmsBridgeEnabled && canViewLmsTechnicalFields() && (
+
+          <div className="flex items-center justify-end gap-1">
+            {isLmsBridgeEnabled && canViewLmsTechnicalFields() && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/enrollments?crmLeadId=${lead.id}`);
+                }}
+                aria-label={`${lead.fullName} үчүн LMS каттоо`}
+              >
+                <GraduationCap className="h-3.5 w-3.5" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon"
               className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
               onClick={(e) => {
                 e.stopPropagation();
-                navigate(`/enrollments?crmLeadId=${lead.id}`);
+                setDeleteTarget(lead);
               }}
-              aria-label={`${lead.fullName} үчүн LMS каттоо`}
+              aria-label={`${ky.common.delete} ${lead.fullName}`}
             >
-              <GraduationCap className="h-3.5 w-3.5" />
+              <Trash2 className="h-3.5 w-3.5" />
             </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
-            onClick={(e) => {
-              e.stopPropagation();
-              setDeleteTarget(lead);
-            }}
-            aria-label={`${ky.common.delete} ${lead.fullName}`}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
+          </div>
         </div>
       </div>
     );
   };
-
-  const headerActions = (
-    <div className="hidden xl:flex flex-wrap items-end gap-2">
-      <div className="space-y-1">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Статус</p>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="h-9 w-[180px]">
-            <SelectValue placeholder={ky.common.status} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Бардык статус</SelectItem>
-            {leadStatusOptions.map(({ value, label }) => (
-              <SelectItem key={value} value={value}>{label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="space-y-1">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Күн аралыгы</p>
-        <Select value={dateFilter} onValueChange={setDateFilter}>
-          <SelectTrigger className="h-9 w-[180px]">
-            <SelectValue placeholder={ky.common.filter} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Бардык күндөр</SelectItem>
-            <SelectItem value="today">{ky.dateRange.today}</SelectItem>
-            <SelectItem value="week">{ky.dateRange.week}</SelectItem>
-            <SelectItem value="month">{ky.dateRange.month}</SelectItem>
-            <SelectItem value="custom">{ky.dateRange.custom}</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="space-y-1">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Менеджер</p>
-        <Select value={managerFilter} onValueChange={setManagerFilter}>
-          <SelectTrigger className="h-9 w-[180px]">
-            <SelectValue placeholder={ky.leads.assignedManager} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Баары</SelectItem>
-            {managerFilterOptions.map((manager) => (
-              <SelectItem key={manager.id} value={String(manager.id)}>{manager.fullName}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      {dateFilter === 'custom' && (
-        <>
-          <div className="space-y-1">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{ky.dateRange.fromDate}</p>
-            <Input
-              type="date"
-              value={customFromDate}
-              onChange={(e) => setCustomFromDate(e.target.value)}
-              className="h-9 w-[168px]"
-            />
-          </div>
-          <div className="space-y-1">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{ky.dateRange.toDate}</p>
-            <Input
-              type="date"
-              value={customToDate}
-              onChange={(e) => setCustomToDate(e.target.value)}
-              className="h-9 w-[168px]"
-            />
-          </div>
-        </>
-      )}
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span className="rounded-full bg-secondary px-2.5 py-1">{totalItems} лид</span>
-        <span className="rounded-full bg-secondary px-2.5 py-1">
-          {leads.filter((lead) => !lead.assignedManager?.fullName).length} дайындалбаган
-        </span>
-        <span className="rounded-full bg-secondary px-2.5 py-1">
-          {leads.filter((lead) => lead.status === 'interested').length} кызыккандар
-        </span>
-      </div>
-    </div>
-  );
 
   const clearAllFilters = () => {
     setSearch('');
@@ -840,9 +816,11 @@ export default function LeadsPage() {
   };
 
   const hasActiveFilters = search.trim() !== '' || statusFilter !== 'all' || managerFilter !== 'all' || dateFilter !== 'all';
+  const pageUnassignedCount = leads.filter((lead) => !lead.assignedManager?.fullName).length;
+  const pageInterestedCount = leads.filter((lead) => lead.status === 'interested').length;
 
   return (
-    <div className="space-y-4 animate-fade-in">
+    <div className="space-y-5 animate-fade-in">
       <PageHeader
         title={ky.leads.title}
         description={isMobile ? undefined : "Лиддерди ыкчам квалификациялап, кийинки кадамга жылдырыңыз."}
@@ -857,6 +835,144 @@ export default function LeadsPage() {
         }
       />
 
+      {!isMobile && (
+        <>
+          <div className="rounded-2xl border border-border/60 bg-card p-4 shadow-card">
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] lg:items-end">
+              <div className="space-y-1.5">
+                <Label className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                  Издөө
+                </Label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Аты, телефон, email, тег, менеджер..."
+                    value={search}
+                    onChange={(e) => updateSearch(e.target.value)}
+                    className="h-10 pl-9"
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="space-y-1.5">
+                  <Label className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                    Статус
+                  </Label>
+                  <Select value={statusFilter} onValueChange={updateStatusFilter}>
+                    <SelectTrigger className="h-10">
+                      <SelectValue placeholder={ky.common.status} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Бардык статус</SelectItem>
+                      {leadStatusOptions.map(({ value, label }) => (
+                        <SelectItem key={value} value={value}>{label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                    Күн аралыгы
+                  </Label>
+                  <Select value={dateFilter} onValueChange={updateDateFilter}>
+                    <SelectTrigger className="h-10">
+                      <SelectValue placeholder={ky.common.filter} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Бардык күндөр</SelectItem>
+                      <SelectItem value="today">{ky.dateRange.today}</SelectItem>
+                      <SelectItem value="week">{ky.dateRange.week}</SelectItem>
+                      <SelectItem value="month">{ky.dateRange.month}</SelectItem>
+                      <SelectItem value="custom">{ky.dateRange.custom}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                    Менеджер
+                  </Label>
+                  <Select value={managerFilter} onValueChange={updateManagerFilter}>
+                    <SelectTrigger className="h-10">
+                      <SelectValue placeholder={ky.leads.assignedManager} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Баары</SelectItem>
+                      {managerFilterOptions.map((manager) => (
+                        <SelectItem key={manager.id} value={String(manager.id)}>{manager.fullName}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+
+            {dateFilter === 'custom' && (
+              <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:max-w-[420px]">
+                <div className="space-y-1.5">
+                  <Label className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                    {ky.dateRange.fromDate}
+                  </Label>
+                  <Input
+                    type="date"
+                    value={customFromDate}
+                    onChange={(e) => updateCustomFromDate(e.target.value)}
+                    className="h-10"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                    {ky.dateRange.toDate}
+                  </Label>
+                  <Input
+                    type="date"
+                    value={customToDate}
+                    onChange={(e) => updateCustomToDate(e.target.value)}
+                    className="h-10"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-4">
+              <Badge variant="secondary" className="h-8 rounded-full px-3">
+                {totalItems} лид
+              </Badge>
+              <Badge variant="secondary" className="h-8 rounded-full px-3">
+                Бул бетте {pageUnassignedCount} дайындалбаган
+              </Badge>
+              <Badge variant="secondary" className="h-8 rounded-full px-3">
+                Бул бетте {pageInterestedCount} кызыккан
+              </Badge>
+              {hasActiveFilters && (
+                <Button variant="ghost" size="sm" onClick={clearAllFilters} className="ml-auto h-8 px-3 text-muted-foreground">
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Тазалоо
+                </Button>
+              )}
+            </div>
+
+            {activeFilters.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {activeFilters.map((filter) => (
+                  <Badge key={filter.key} variant="secondary" className="gap-1 h-7 px-2.5">
+                    {filter.label}
+                    <button
+                      type="button"
+                      onClick={filter.onRemove}
+                      className="ml-1 rounded-sm hover:bg-secondary-foreground/20"
+                      aria-label={`${filter.label} чыпкасын алып салуу`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
       {/* Mobile filter section */}
       {isMobile && (
         <div className="rounded-xl bg-muted/30 p-3 space-y-3">
@@ -866,14 +982,14 @@ export default function LeadsPage() {
             <Input
               placeholder="Аты, телефон, email, тег, менеджер..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => updateSearch(e.target.value)}
               className="pl-9 h-9"
             />
           </div>
 
           {/* Filter controls row */}
           <div className="flex flex-wrap items-center gap-2">
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <Select value={statusFilter} onValueChange={updateStatusFilter}>
               <SelectTrigger className="h-9 flex-1">
                 <SelectValue placeholder="Статус" />
               </SelectTrigger>
@@ -884,7 +1000,7 @@ export default function LeadsPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={dateFilter} onValueChange={setDateFilter}>
+            <Select value={dateFilter} onValueChange={updateDateFilter}>
               <SelectTrigger className="h-9 flex-1">
                 <SelectValue placeholder="Күн" />
               </SelectTrigger>
@@ -896,7 +1012,7 @@ export default function LeadsPage() {
                 <SelectItem value="custom">Өзүңүз тандаңыз</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={managerFilter} onValueChange={setManagerFilter}>
+            <Select value={managerFilter} onValueChange={updateManagerFilter}>
               <SelectTrigger className="h-9 flex-1">
                 <SelectValue placeholder={ky.leads.assignedManager} />
               </SelectTrigger>
@@ -928,7 +1044,7 @@ export default function LeadsPage() {
                 <Input
                   type="date"
                   value={customFromDate}
-                  onChange={(e) => setCustomFromDate(e.target.value)}
+                  onChange={(e) => updateCustomFromDate(e.target.value)}
                   className="h-8 text-sm"
                 />
               </div>
@@ -937,7 +1053,7 @@ export default function LeadsPage() {
                 <Input
                   type="date"
                   value={customToDate}
-                  onChange={(e) => setCustomToDate(e.target.value)}
+                  onChange={(e) => updateCustomToDate(e.target.value)}
                   className="h-8 text-sm"
                 />
               </div>
@@ -971,15 +1087,10 @@ export default function LeadsPage() {
         isLoading={isLoading}
         errorMessage={error || undefined}
         onRetry={fetchLeads}
-        searchValue={!isMobile ? search : undefined}
-        onSearchChange={!isMobile ? setSearch : undefined}
-        searchPlaceholder="Аты, телефон, email, тег, менеджер..."
-        headerActions={!isMobile ? headerActions : undefined}
         page={page}
         totalPages={totalPages}
         totalItems={totalItems}
         totalItemsLabel="лид"
-        activeFilters={!isMobile ? activeFilters : undefined}
         stickyHeader
         onPageChange={setPage}
         onRowClick={(lead) => navigate(`/leads/${lead.id}`)}
@@ -1011,12 +1122,18 @@ export default function LeadsPage() {
         }
         setCreateOpen(open);
       }}>
-        <DialogContent className="max-h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] overflow-y-auto sm:max-w-2xl">
+        <DialogContent className="max-h-[calc(100vh-2rem)] sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{ky.leads.newLead}</DialogTitle>
+            <DialogDescription>Лиддин негизги маалыматын сактап, керек болсо дароо жооптуу кызматкерге дайындаңыз.</DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleCreate} className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
+          <form onSubmit={handleCreate} className="space-y-5">
+            <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+              <div className="mb-4">
+                <p className="text-sm font-semibold text-foreground">Негизги маалымат</p>
+                <p className="text-xs text-muted-foreground">Аты жана телефону милдеттүү. Булак, статус жана owner workflow'ду тездетет.</p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>{ky.common.name} *</Label>
                 <Input value={newLead.fullName} onChange={(e) => setNewLead(p => ({ ...p, fullName: e.target.value }))} required />
@@ -1111,16 +1228,27 @@ export default function LeadsPage() {
                 )}
               </div>
             </div>
-            <div className="space-y-2">
-              <Label>{ky.common.tags}</Label>
-              <Input value={newLead.tags.join(', ')} onChange={(e) => setNewLead(p => ({ ...p, tags: e.target.value.split(',').map(t => t.trim()).filter(Boolean) }))} placeholder="IT, Frontend, Ысык лид" />
             </div>
-            <div className="space-y-2">
-              <Label>{ky.common.notes}</Label>
-              <Textarea value={newLead.notes} onChange={(e) => setNewLead(p => ({ ...p, notes: e.target.value }))} rows={2} />
+            <div className="rounded-2xl border border-border/60 p-4">
+              <div className="mb-4">
+                <p className="text-sm font-semibold text-foreground">Контекст</p>
+                <p className="text-xs text-muted-foreground">Тегдер жана белгилер кийинки фильтрлөө менен follow-up үчүн колдонулат.</p>
+              </div>
+              <div className="space-y-2">
+                <Label>{ky.common.tags}</Label>
+                <Input value={newLead.tags.join(', ')} onChange={(e) => setNewLead(p => ({ ...p, tags: e.target.value.split(',').map(t => t.trim()).filter(Boolean) }))} placeholder="IT, Frontend, Ысык лид" />
+              </div>
+              <div className="mt-4 space-y-2">
+                <Label>{ky.common.notes}</Label>
+                <Textarea value={newLead.notes} onChange={(e) => setNewLead(p => ({ ...p, notes: e.target.value }))} rows={2} />
+              </div>
             </div>
             {isLmsBridgeEnabled ? (
-              <>
+              <div className="rounded-2xl border border-border/60 p-4">
+                <div className="mb-4">
+                  <p className="text-sm font-semibold text-foreground">Окуу кызыгуусу</p>
+                  <p className="text-xs text-muted-foreground">Курс жана группа тандоосу кийинки келишимди алдын ала толтурат.</p>
+                </div>
                 <LmsCourseContextFields
                   value={{
                     lmsCourseId: newLead.interestedCourseId || '',
@@ -1159,9 +1287,9 @@ export default function LeadsPage() {
                     </SelectContent>
                   </Select>
                 </div>
-              </>
+              </div>
             ) : null}
-            <div className="flex justify-end gap-2">
+            <DialogFooter className="border-t border-border/60 pt-4">
               <Button type="button" variant="outline" onClick={resetCreateForm}>{ky.common.cancel}</Button>
               <Button
                 type="submit"
@@ -1178,7 +1306,7 @@ export default function LeadsPage() {
                 <Save className="mr-2 h-4 w-4" />
                 {duplicateCheck?.hasDuplicate ? 'Кайталанган лид бар' : ky.common.save}
               </Button>
-            </div>
+            </DialogFooter>
           </form>
         </DialogContent>
       </Dialog >

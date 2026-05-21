@@ -1,19 +1,23 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { PageHeader } from '@/components/PageShell';
+import { useNavigate } from 'react-router-dom';
+import { PageEmpty, PageError, PageHeader, PageLoading } from '@/components/PageShell';
 import { KanbanBoard, type KanbanColumn } from '@/components/KanbanBoard';
-import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge, getLeadStatusVariant } from '@/components/StatusBadge';
 import { ky } from '@/lib/i18n';
 import { dealsApi } from '@/api/modules';
 import type { Deal, DealPipelineStage } from '@/types';
 import { getDealPipelineStage } from '@/lib/crm-status';
 import { useTenantConfig } from '@/components/core/TenantConfigProvider';
-import { User, DollarSign } from 'lucide-react';
+import { User, DollarSign, TrendingUp, CircleOff, ArrowRight } from 'lucide-react';
 
 export default function PipelinePage() {
+  const navigate = useNavigate();
   const { tenantConfig } = useTenantConfig();
   const [deals, setDeals] = useState<Deal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [activeColumn, setActiveColumn] = useState<string>('new');
 
   // Use tenant-configured pipeline stages if available, otherwise use hardcoded stages
@@ -50,12 +54,14 @@ export default function PipelinePage() {
 
   useEffect(() => {
     setIsLoading(true);
+    setLoadError(null);
     fetchAllDeals()
       .then((allDeals) => {
         setDeals(allDeals);
       })
       .catch(() => {
         setDeals([]);
+        setLoadError('Келишимдерди жүктөө мүмкүн болгон жок. Кийинчерээк кайра аракет кылыңыз.');
       })
       .finally(() => setIsLoading(false));
   }, [fetchAllDeals]);
@@ -98,59 +104,200 @@ export default function PipelinePage() {
     [deals, tenantConfig.pipelineStages],
   );
 
+  const activeDeals = useMemo(
+    () => deals.filter((deal) => {
+      const stage = getDealPipelineStage(deal, tenantConfig.pipelineStages);
+      return stage !== 'won' && stage !== 'lost';
+    }),
+    [deals, tenantConfig.pipelineStages],
+  );
+
+  const totalActiveValue = useMemo(
+    () => activeDeals.reduce((sum, deal) => sum + deal.amount, 0),
+    [activeDeals],
+  );
+
+  const wonDealsValue = useMemo(
+    () => deals
+      .filter((deal) => getDealPipelineStage(deal, tenantConfig.pipelineStages) === 'won')
+      .reduce((sum, deal) => sum + deal.amount, 0),
+    [deals, tenantConfig.pipelineStages],
+  );
+
+  const bestPerformingStage = stageSummaries.reduce<typeof stageSummaries[number] | null>((best, stage) => {
+    if (!best) return stage;
+    return stage.count > best.count ? stage : best;
+  }, null);
+
   const renderCard = (deal: Deal) => (
-    <Card className="shadow-soft border-border/50 hover:shadow-medium transition-shadow">
-      <CardContent className="p-3 space-y-2">
-        <div className="flex items-center gap-2">
-          <User className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="text-sm font-medium truncate">{deal.lead?.fullName || deal.contact?.fullName || '—'}</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1">
-            <DollarSign className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="text-sm font-semibold">{deal.amount.toLocaleString()} {tenantConfig.currency}</span>
+    <Card className="border-border/60 bg-background shadow-sm transition hover:border-border hover:shadow-md">
+      <CardContent className="space-y-3 p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 space-y-1">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <User className="h-3.5 w-3.5" />
+              <span>Кардар</span>
+            </div>
+            <p className="truncate text-sm font-semibold text-foreground">
+              {deal.lead?.fullName || deal.contact?.fullName || '—'}
+            </p>
           </div>
-          {(() => { const stage = getDealPipelineStage(deal); return <StatusBadge variant={getLeadStatusVariant(stage)}>{stages.find(s => s.id === stage)?.title || ky.dealPipelineStage[stage]}</StatusBadge>; })()}
+          <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+        </div>
+
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-muted/20 px-3 py-2">
+          <div className="flex items-center gap-1.5">
+            <DollarSign className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-sm font-semibold text-foreground">
+              {deal.amount.toLocaleString()} {tenantConfig.currency}
+            </span>
+          </div>
+          {(() => {
+            const stage = getDealPipelineStage(deal, tenantConfig.pipelineStages);
+            return (
+              <StatusBadge variant={getLeadStatusVariant(stage)}>
+                {stages.find((s) => s.id === stage)?.title || ky.dealPipelineStage[stage]}
+              </StatusBadge>
+            );
+          })()}
         </div>
       </CardContent>
     </Card>
   );
 
-  if (isLoading) return <div className="flex items-center justify-center h-64"><span className="text-muted-foreground">{ky.common.loading}</span></div>;
+  if (isLoading) return <PageLoading />;
+
+  if (loadError) {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <PageHeader
+          title={ky.nav.pipeline}
+          description="Келишимдердин агымын, этаптардагы көлөмдү жана жоготууларды көзөмөлдөңүз."
+        />
+        <PageError message={loadError} onRetry={() => window.location.reload()} />
+      </div>
+    );
+  }
+
+  if (deals.length === 0) {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <PageHeader
+          title={ky.nav.pipeline}
+          description="Келишимдердин агымын, этаптардагы көлөмдү жана жоготууларды көзөмөлдөңүз."
+        />
+        <PageEmpty message="Азырынча pipeline үчүн келишимдер жок." />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <PageHeader title={ky.nav.pipeline} />
+      <PageHeader
+        title={ky.nav.pipeline}
+        description="Келишимдердин агымын, этаптардагы көлөмдү жана жоготууларды көзөмөлдөңүз."
+      />
+
+      <Card className="border-border/60 bg-card shadow-card">
+        <CardContent className="p-5">
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
+                  {deals.length} келишим
+                </Badge>
+                <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
+                  Активдүү: {activeDeals.length}
+                </Badge>
+                <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
+                  Жоголгон: {lostDealsCount}
+                </Badge>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                <PipelineStat
+                  icon={DollarSign}
+                  label="Активдүү сумма"
+                  value={`${totalActiveValue.toLocaleString()} ${tenantConfig.currency}`}
+                />
+                <PipelineStat
+                  icon={TrendingUp}
+                  label="Жабылган сумма"
+                  value={`${wonDealsValue.toLocaleString()} ${tenantConfig.currency}`}
+                />
+                <PipelineStat
+                  icon={bestPerformingStage ? TrendingUp : CircleOff}
+                  label="Эң чоң этап"
+                  value={bestPerformingStage ? `${bestPerformingStage.title} (${bestPerformingStage.count})` : '—'}
+                />
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+              <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                Этаптардын көрүнүшү
+              </p>
+              <div className="mt-3 space-y-3">
+                {stageSummaries.slice(0, 4).map((stage) => (
+                  <div key={stage.id} className="rounded-xl border border-border/50 bg-background px-3 py-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-medium text-foreground">{stage.title}</span>
+                      <span className="text-sm font-semibold text-foreground">{stage.count}</span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
+                      <span>Мурункудан</span>
+                      <span>{stage.conversionFromPrevious == null ? '—' : `${stage.conversionFromPrevious.toFixed(1)}%`}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {stageSummaries.map((stage) => (
-          <Card key={stage.id} className="shadow-soft border-border/50">
+          <Card key={stage.id} className="border-border/60 shadow-sm">
             <CardContent className="p-4">
-              <p className="text-xs text-muted-foreground">{stage.title}</p>
-              <p className="mt-1 text-2xl font-semibold">{stage.count}</p>
-              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-                <p>
-                  Мурункудан: {stage.conversionFromPrevious == null ? '—' : `${stage.conversionFromPrevious.toFixed(1)}%`}
-                </p>
-                <p>
-                  Башынан: {stage.conversionFromStart == null ? '—' : `${stage.conversionFromStart.toFixed(1)}%`}
-                </p>
+              <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">{stage.title}</p>
+              <p className="mt-2 text-2xl font-semibold text-foreground">{stage.count}</p>
+              <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+                <p>Мурункудан: {stage.conversionFromPrevious == null ? '—' : `${stage.conversionFromPrevious.toFixed(1)}%`}</p>
+                <p>Башынан: {stage.conversionFromStart == null ? '—' : `${stage.conversionFromStart.toFixed(1)}%`}</p>
               </div>
             </CardContent>
           </Card>
         ))}
       </div>
-      <Card className="border-destructive/20 bg-destructive/5 shadow-soft">
-        <CardContent className="p-4">
-          <p className="text-xs text-muted-foreground">Жоголгон келишимдер</p>
-          <p className="mt-1 text-xl font-semibold">{lostDealsCount}</p>
-        </CardContent>
-      </Card>
+
       <KanbanBoard
         columns={columns}
         renderCard={renderCard}
+        onCardClick={(deal) => navigate(`/deals/${deal.id}`)}
         activeColumn={activeColumn}
         onColumnChange={setActiveColumn}
       />
+    </div>
+  );
+}
+
+function PipelineStat({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-xl border border-border/60 bg-background p-3">
+      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+        <Icon className="h-3.5 w-3.5" />
+        <span>{label}</span>
+      </div>
+      <p className="mt-2 text-sm font-semibold text-foreground">{value}</p>
     </div>
   );
 }

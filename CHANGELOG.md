@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Version bumps are classified by delivery scale; see `VERSIONING.md`.
 
+## [3.0.1] - 2026-05-21
+
+### Added
+- Localization implementation plan covering tenant CRM, platform admin, CRM backend, and LMS backend alignment.
+- Shared async helper for concurrency-limited AI enrichment requests.
+
+### Changed
+- Refined leads, deals, contacts, detail pages, pipeline, kanban, dialogs, cards, and table layouts for a more consistent release UI.
+- Improved list loading behavior so lead/deal lists render before slower AI enrichment requests complete.
+- Limited AI priority/risk enrichment concurrency and stopped follow-up requests after AI rate limits.
+- Improved AI error handling with safer `unknown` error typing and clearer dialog descriptions.
+- Updated ESLint React Refresh configuration to allow intentional shared exports used by existing UI/context modules.
+
+### Fixed
+- Fixed stale response handling for lead/deal list fetches.
+- Fixed detail error actions so “back to list” actions are labeled accurately.
+- Fixed `AuthContext` hook dependencies for token refresh bootstrap synchronization.
+- Fixed unmatched WhatsApp queue cleanup so unmounted debounce flows do not update state.
+- Removed lint warnings ahead of release.
+
 ## [3.0.0] - 2026-05-06
 
 ### Breaking Changes

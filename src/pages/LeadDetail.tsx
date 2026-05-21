@@ -2,16 +2,17 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useEffect, useState, useMemo } from 'react';
 import { PageError, PageHeader, PageLoading } from '@/components/PageShell';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { StatusBadge, getLeadStatusVariant } from '@/components/StatusBadge';
 import { ky } from '@/lib/i18n';
-import { ArrowLeft, Phone, Mail, Tag, User, MessageSquare, Loader2, Save, Calendar, Sparkles, MoreHorizontal } from 'lucide-react';
+import { ArrowLeft, Phone, Mail, Tag, User, MessageSquare, Loader2, Save, Calendar, Sparkles, MoreHorizontal, Building2 } from 'lucide-react';
 import { leadsApi, usersApi } from '@/api/modules';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -78,6 +79,20 @@ function formatDisplayDateTime(value?: string | Date | null): string {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return '—';
   return date.toLocaleString();
+}
+
+function buildDealCreationPath(lead: Lead, leadCourseName?: string, leadGroupName?: string): string {
+  const params = new URLSearchParams({
+    create: '1',
+    leadId: String(lead.id),
+  });
+  if (lead.contactId) params.set('contactId', String(lead.contactId));
+  if (lead.interestedCourseId) params.set('courseId', lead.interestedCourseId);
+  if (lead.interestedGroupId) params.set('groupId', lead.interestedGroupId);
+  if (lead.courseType) params.set('courseType', lead.courseType);
+  if (leadCourseName) params.set('courseName', leadCourseName);
+  if (leadGroupName) params.set('groupName', leadGroupName);
+  return `/deals?${params.toString()}`;
 }
 
 // Helper functions for extraction mapping
@@ -172,15 +187,15 @@ export default function LeadDetailPage() {
       }));
     }
     return [
-      { value: 'new', label: 'New' },
-      { value: 'no_response', label: 'No Response' },
-      { value: 'contacted', label: 'Contacted' },
-      { value: 'interested', label: 'Interested' },
-      { value: 'offer_sent', label: 'Offer Sent' },
-      { value: 'negotiation', label: 'Negotiation' },
-      { value: 'payment_pending', label: 'Payment Pending' },
-      { value: 'won', label: 'Won' },
-      { value: 'lost', label: 'Lost' },
+      { value: 'new', label: 'Жаңы' },
+      { value: 'no_response', label: 'Жооп жок' },
+      { value: 'contacted', label: 'Байланыш түзүлдү' },
+      { value: 'interested', label: 'Кызыкты' },
+      { value: 'offer_sent', label: 'Сунуш жөнөтүлдү' },
+      { value: 'negotiation', label: 'Сүйлөшүү жүрүп жатат' },
+      { value: 'payment_pending', label: 'Төлөм күтүлүүдө' },
+      { value: 'won', label: 'Ийгиликтүү' },
+      { value: 'lost', label: 'Жабылды' },
     ];
   }, [tenantConfig.leadStatuses]);
 
@@ -218,6 +233,11 @@ export default function LeadDetailPage() {
     ky.leadSource[lead.source] ||
     lead.source
   ) : '—';
+  const nextFollowUpLabel = formatDisplayDateTime(lead?.nextFollowUpAt);
+  const lastContactedLabel = formatDisplayDateTime(lead?.lastContactedAt);
+  const leadStatusLabel = lead
+    ? (leadStatusOptions.find((option) => option.value === lead.status)?.label || lead.status)
+    : '—';
 
   useEffect(() => {
     if (!id || id === 'new') return;
@@ -579,7 +599,7 @@ export default function LeadDetailPage() {
             </Button>
           }
         />
-        <PageError message={error || 'Лид табылган жок'} onRetry={() => navigate('/leads')} />
+        <PageError message={error || 'Лид табылган жок'} onRetry={() => navigate('/leads')} actionLabel="Тизмеге кайтуу" />
       </div>
     );
   }
@@ -588,6 +608,7 @@ export default function LeadDetailPage() {
     <div className="space-y-6 animate-fade-in">
       <PageHeader
         title={lead.fullName}
+        description={`${sourceLabel} • ${leadStatusLabel}`}
         actions={
           <div className="flex w-full items-center justify-between gap-2 sm:flex-wrap sm:justify-end">
             <div className="flex items-center gap-2 sm:hidden">
@@ -598,24 +619,6 @@ export default function LeadDetailPage() {
               <Button className="h-9" variant="outline" onClick={() => setIsEditOpen(true)}>
                 {ky.common.edit}
               </Button>
-              <Button
-                className="h-9"
-                onClick={() => {
-                  const params = new URLSearchParams({
-                    create: '1',
-                    leadId: String(lead.id),
-                  });
-                  if (lead.contactId) params.set('contactId', String(lead.contactId));
-                  if (lead.interestedCourseId) params.set('courseId', lead.interestedCourseId);
-                  if (lead.interestedGroupId) params.set('groupId', lead.interestedGroupId);
-                  if (lead.courseType) params.set('courseType', lead.courseType);
-                  if (leadCourseName) params.set('courseName', leadCourseName);
-                  if (leadGroupName) params.set('groupName', leadGroupName);
-                  navigate(`/deals?${params.toString()}`);
-                }}
-              >
-                Келишим түзүү
-              </Button>
             </div>
 
             <DropdownMenu>
@@ -625,6 +628,9 @@ export default function LeadDetailPage() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuItem onClick={() => navigate(buildDealCreationPath(lead, leadCourseName, leadGroupName))}>
+                  Келишим түзүү
+                </DropdownMenuItem>
                 {isAiDraftsEnabled ? (
                   <DropdownMenuItem onClick={() => setIsAiDraftOpen(true)}>
                     AI жооп сунушу
@@ -641,86 +647,141 @@ export default function LeadDetailPage() {
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <div className="hidden sm:flex sm:flex-wrap sm:justify-end sm:gap-2">
+            <div className="hidden sm:flex sm:flex-wrap sm:items-center sm:justify-end sm:gap-2">
               <Button className="h-9" variant="outline" onClick={() => navigate('/leads')}>
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 {ky.common.back}
               </Button>
-              <Button className="h-9" variant="outline" onClick={() => setIsEditOpen(true)}>
-                {ky.common.edit}
-              </Button>
-              {isAiDraftsEnabled ? (
-                <Button className="h-9" variant="outline" onClick={() => setIsAiDraftOpen(true)}>
-                  <Sparkles className="mr-2 h-4 w-4" />
-                  AI жооп сунушу
-                </Button>
-              ) : null}
               <Button
                 className="h-9"
-                variant="outline"
-                onClick={() => {
-                  const params = new URLSearchParams({
-                    create: '1',
-                    leadId: String(lead.id),
-                  });
-                  if (lead.contactId) params.set('contactId', String(lead.contactId));
-                  if (lead.interestedCourseId) params.set('courseId', lead.interestedCourseId);
-                  if (lead.interestedGroupId) params.set('groupId', lead.interestedGroupId);
-                  if (lead.courseType) params.set('courseType', lead.courseType);
-                  if (leadCourseName) params.set('courseName', leadCourseName);
-                  if (leadGroupName) params.set('groupName', leadGroupName);
-                  navigate(`/deals?${params.toString()}`);
-                }}
+                onClick={() => navigate(buildDealCreationPath(lead, leadCourseName, leadGroupName))}
               >
+                <Building2 className="mr-2 h-4 w-4" />
                 Келишим түзүү
-              </Button>
-              <Button className="h-9" variant="outline" onClick={() => setIsScheduleOpen(true)}>
-                <Calendar className="mr-2 h-4 w-4" />
-                Пландоо
               </Button>
               <Button className="h-9" onClick={handleConvertToContact} disabled={isConverting || !!lead.contactId}>
                 {isConverting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {lead.contactId ? 'Байланышка айланган' : ky.leads.convertToContact}
               </Button>
+              <div className="ml-1 flex items-center gap-2 rounded-full border border-border/70 bg-muted/20 px-2 py-1">
+                <Button className="h-8" variant="ghost" onClick={() => setIsEditOpen(true)}>
+                  {ky.common.edit}
+                </Button>
+                <Button className="h-8" variant="ghost" onClick={() => setIsScheduleOpen(true)}>
+                  <Calendar className="mr-2 h-4 w-4" />
+                  Пландоо
+                </Button>
+                {isAiDraftsEnabled ? (
+                  <Button className="h-8" variant="ghost" onClick={() => setIsAiDraftOpen(true)}>
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    AI жооп сунушу
+                  </Button>
+                ) : null}
+              </div>
             </div>
           </div>
         }
       />
 
-      <div className="grid items-start gap-6 lg:grid-cols-3">
+      <Card className="border-border/60 bg-card shadow-card">
+        <CardContent className="p-5">
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusBadge variant={getLeadStatusVariant(lead.status)} dot>
+                  {leadStatusLabel}
+                </StatusBadge>
+                <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
+                  Булак: {sourceLabel}
+                </Badge>
+                {lead.contactId ? (
+                  <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
+                    Байланышка айланган
+                  </Badge>
+                ) : null}
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                <SummaryStat
+                  label={ky.leads.assignedManager}
+                  value={lead.assignedManager?.fullName || ky.common.notAssigned}
+                  icon={User}
+                />
+                <SummaryStat
+                  label="Кийинки follow-up"
+                  value={nextFollowUpLabel}
+                  icon={Calendar}
+                />
+                <SummaryStat
+                  label="Акыркы байланыш"
+                  value={lastContactedLabel}
+                  icon={MessageSquare}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+              <ActionTile
+                label={ky.common.phone}
+                value={lead.phone}
+                href={`tel:${lead.phone}`}
+                icon={Phone}
+              />
+              <ActionTile
+                label={ky.common.email}
+                value={lead.email || 'Email жок'}
+                href={lead.email ? `mailto:${lead.email}` : undefined}
+                icon={Mail}
+                muted={!lead.email}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(320px,1fr)]">
         {aiDraftMessage ? (
           <AiDraftHandoffCard
             value={aiDraftMessage}
             onChange={setAiDraftMessage}
             onClear={() => setAiDraftMessage('')}
-            className="lg:col-span-3"
+            className="xl:col-span-2"
           />
         ) : null}
 
-        <Card className="shadow-card border-border/50 lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="text-base">Лид маалыматы</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <InfoRow icon={User} label={ky.common.name} value={lead.fullName} />
-              <InfoRow icon={Phone} label={ky.common.phone} value={lead.phone} />
-              <InfoRow icon={Mail} label={ky.common.email} value={lead.email} />
-              <InfoRow icon={MessageSquare} label={ky.leads.source} value={sourceLabel} />
-              <InfoRow icon={User} label={ky.leads.assignedManager} value={lead.assignedManager?.fullName || '—'} />
-              <InfoRow icon={Calendar} label="Акыркы байланыш" value={formatDisplayDateTime(lead.lastContactedAt)} />
-              <InfoRow icon={Calendar} label="Кийинки follow-up" value={formatDisplayDateTime(lead.nextFollowUpAt)} />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-muted-foreground mb-1">{ky.common.status}</p>
-              <StatusBadge variant={getLeadStatusVariant(lead.status)} dot>{leadStatusOptions.find(opt => opt.value === lead.status)?.label || lead.status}</StatusBadge>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="space-y-6">
+          <Card className="shadow-card border-border/50">
+            <CardHeader className="pb-4">
+              <CardTitle className="text-base">Лид маалыматы</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <InfoRow icon={User} label={ky.common.name} value={lead.fullName} />
+                <InfoRow icon={MessageSquare} label={ky.leads.source} value={sourceLabel} />
+                <InfoRow icon={User} label={ky.leads.assignedManager} value={lead.assignedManager?.fullName || '—'} />
+                <InfoRow icon={Calendar} label="Акыркы байланыш" value={lastContactedLabel} />
+                <InfoRow icon={Calendar} label="Кийинки follow-up" value={nextFollowUpLabel} />
+                {isLmsBridgeEnabled ? (
+                  <InfoRow icon={Building2} label="Кызыккан курс" value={leadCourseName || '—'} />
+                ) : null}
+              </div>
+            </CardContent>
+          </Card>
 
-        {/* Release 2 - Operational Intelligence Components */}
-        {isAiOperationalIntelligenceEnabled && (
-          <div className="space-y-4 lg:col-span-3">
+          {isLmsBridgeEnabled && (
+            <LeadCourseInterest
+              interestedCourseId={lead.interestedCourseId || undefined}
+              interestedGroupId={lead.interestedGroupId || undefined}
+              courseType={lead.courseType || undefined}
+              interestLevel={lead.interestLevel || undefined}
+              courseName={leadCourseName}
+              groupName={leadGroupName}
+            />
+          )}
+
+          {/* Release 2 - Operational Intelligence Components */}
+          {isAiOperationalIntelligenceEnabled && (
+            <div className="space-y-4">
             <div className="rounded-2xl border border-orange-200/70 bg-orange-50/70 p-4 shadow-sm">
               <div className="flex items-start gap-3">
                 <div className="rounded-2xl bg-white p-2 shadow-sm">
@@ -841,37 +902,31 @@ export default function LeadDetailPage() {
                 )}
               </div>
             </div>
-          </div>
-        )}
+            </div>
+          )}
+        </div>
 
-        {isLmsBridgeEnabled && (
-          <LeadCourseInterest
-            interestedCourseId={lead.interestedCourseId || undefined}
-            interestedGroupId={lead.interestedGroupId || undefined}
-            courseType={lead.courseType || undefined}
-            interestLevel={lead.interestLevel || undefined}
-            courseName={leadCourseName}
-            groupName={leadGroupName}
-          />
-        )}
-
-        <div className="space-y-4 lg:col-span-1">
+        <div className="space-y-4 xl:sticky xl:top-6">
           <Card className="shadow-card border-border/50">
-            <CardHeader>
+            <CardHeader className="pb-3">
               <CardTitle className="text-base">{ky.common.tags}</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex flex-wrap gap-2">
-                {(lead.tags || []).map((tag) => (
-                  <span key={tag} className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
-                    <Tag className="h-3 w-3" />{tag}
-                  </span>
-                ))}
-              </div>
+              {lead.tags && lead.tags.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {lead.tags.map((tag) => (
+                    <span key={tag} className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
+                      <Tag className="h-3 w-3" />{tag}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">Тегдер кошула элек.</p>
+              )}
             </CardContent>
           </Card>
           <Card className="shadow-card border-border/50">
-            <CardHeader>
+            <CardHeader className="pb-3">
               <CardTitle className="text-base">{ky.common.notes}</CardTitle>
             </CardHeader>
             <CardContent>
@@ -899,12 +954,18 @@ export default function LeadDetailPage() {
         }
         setIsEditOpen(open);
       }}>
-        <DialogContent className="max-h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] overflow-y-auto sm:max-w-lg">
+        <DialogContent className="max-h-[calc(100vh-2rem)] sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{ky.common.edit}</DialogTitle>
+            <DialogDescription>Лиддин негизги маалыматын, жооптуу адамын жана кийинки follow-up убактысын жаңыртыңыз.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-5">
+            <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+              <div className="mb-4">
+                <p className="text-sm font-semibold text-foreground">Негизги маалымат</p>
+                <p className="text-xs text-muted-foreground">Аты, телефон, булагы жана учурдагы статусу.</p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>{ky.common.name} *</Label>
                 <Input value={form.fullName} onChange={(e) => setForm((prev) => ({ ...prev, fullName: e.target.value }))} />
@@ -982,7 +1043,13 @@ export default function LeadDetailPage() {
                 />
               </div>
             </div>
-            <div className="space-y-2">
+            </div>
+            <div className="rounded-2xl border border-border/60 p-4">
+              <div className="mb-4">
+                <p className="text-sm font-semibold text-foreground">Контекст</p>
+                <p className="text-xs text-muted-foreground">Тегдер жана эскертүүлөр командага кийинки аракетти түшүнүүгө жардам берет.</p>
+              </div>
+              <div className="space-y-2">
               <Label>{ky.common.tags}</Label>
               <Input
                 value={form.tags}
@@ -991,12 +1058,17 @@ export default function LeadDetailPage() {
               />
               <p className="text-xs text-muted-foreground">Тегдерди үтүр менен бөлүп жазыңыз.</p>
             </div>
-            <div className="space-y-2">
-              <Label>{ky.common.notes}</Label>
-              <Textarea value={form.notes} onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))} rows={3} />
+              <div className="mt-4 space-y-2">
+                <Label>{ky.common.notes}</Label>
+                <Textarea value={form.notes} onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))} rows={3} />
+              </div>
             </div>
             {isLmsBridgeEnabled ? (
-              <>
+              <div className="rounded-2xl border border-border/60 p-4">
+                <div className="mb-4">
+                  <p className="text-sm font-semibold text-foreground">Окуу кызыгуусу</p>
+                  <p className="text-xs text-muted-foreground">Бул маалымат кийин келишим ачууда автоматтык түрдө сунушталат.</p>
+                </div>
                 <LmsCourseContextFields
                   value={{
                     lmsCourseId: form.interestedCourseId,
@@ -1035,10 +1107,10 @@ export default function LeadDetailPage() {
                     </SelectContent>
                   </Select>
                 </div>
-              </>
+              </div>
             ) : null}
           </div>
-          <DialogFooter>
+          <DialogFooter className="border-t border-border/60 pt-4">
             <Button variant="outline" onClick={resetEditForm} disabled={isSaving}>
               {ky.common.cancel}
             </Button>
@@ -1097,5 +1169,57 @@ function InfoRow({ icon: Icon, label, value }: { icon: React.ElementType; label:
         <p className="break-words text-sm font-medium">{value}</p>
       </div>
     </div>
+  );
+}
+
+function SummaryStat({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
+      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+        <Icon className="h-3.5 w-3.5" />
+        <span>{label}</span>
+      </div>
+      <p className="mt-2 text-sm font-semibold text-foreground">{value}</p>
+    </div>
+  );
+}
+
+function ActionTile({
+  icon: Icon,
+  label,
+  value,
+  href,
+  muted = false,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string;
+  href?: string;
+  muted?: boolean;
+}) {
+  const content = (
+    <div className="rounded-xl border border-border/60 bg-background p-3 transition-colors hover:bg-muted/20">
+      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+        <Icon className="h-3.5 w-3.5" />
+        <span>{label}</span>
+      </div>
+      <p className={`mt-2 text-sm font-semibold ${muted ? 'text-muted-foreground' : 'text-foreground'}`}>{value}</p>
+    </div>
+  );
+
+  if (!href) return content;
+
+  return (
+    <a href={href} className="block">
+      {content}
+    </a>
   );
 }

@@ -1,7 +1,7 @@
 {
   "name": "edubot-crm-tenant",
   "private": true,
-  "version": "3.0.0",
+  "version": "3.0.1",
   "packageManager": "npm@10.9.0",
   "type": "module",
   "scripts": {

@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { CheckCircle, ChevronDown, ChevronUp, Edit, Sparkles, X } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -213,6 +213,7 @@ export function StructuredSuggestionReview({
             <Sparkles className="h-5 w-5 text-orange-500" />
             AI сунуштарын текшерүү
           </DialogTitle>
+          <DialogDescription>Ар бир сунушталган өзгөртүүнү карап чыгып, кабыл алыңыз, четке кагыңыз же кол менен түзөтүңүз.</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
@@ -264,7 +265,7 @@ export function StructuredSuggestionReview({
           )}
         </div>
 
-        <DialogFooter className="flex flex-col gap-2 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+        <DialogFooter className="flex flex-col gap-2 border-t border-border/60 pt-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Жабуу</Button>
             <Button variant="outline" onClick={() => {

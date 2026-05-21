@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PageHeader } from '@/components/PageShell';
 import { DataTable, type Column } from '@/components/DataTable';
@@ -7,11 +7,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { Card, CardContent } from '@/components/ui/card';
 import { ky } from '@/lib/i18n';
 import { contactApi, dealsApi, leadsApi, tasksApi, trialLessonsApi } from '@/api/modules';
 import { useRolePermissions } from '@/hooks/use-role-permissions';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { useLmsBridge } from '@/components/lms/LmsBridgeProvider';
 import { useTenantConfig } from '@/components/core/TenantConfigProvider';
 import type { Contact, Deal, DealPipelineStage, Lead, TrialLesson } from '@/types';
@@ -25,7 +27,8 @@ import { LmsCourseContextFields } from '@/components/lms/LmsCourseContextFields'
 import { useLmsCourses, useLmsGroups } from '@/hooks/use-lms';
 import { ListPriorityIndicator, PriorityScore, RiskScore } from '@/components/ai/PriorityIndicator';
 import { useFeatureFlags } from '@/components/core/FeatureFlagProvider';
-import { aiApi } from '@/api/ai';
+import { aiApi, isAiRateLimitError } from '@/api/ai';
+import { runWithConcurrencyLimit } from '@/lib/async';
 
 type DealCreateFormState = {
   leadId: string;
@@ -70,6 +73,7 @@ function normalizeCourseType(value?: string | null): LmsCourseType | '' {
 export default function DealsPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const isMobile = useIsMobile();
   const { toast } = useToast();
   const { canViewLmsTechnicalFields } = useRolePermissions();
   const { isLmsBridgeEnabled } = useLmsBridge();
@@ -98,6 +102,7 @@ export default function DealsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  const fetchRequestRef = useRef(0);
 
   // Release 2 - Priority and risk data for deals
   const [dealPriorities, setDealPriorities] = useState<Record<number, PriorityScore>>({});
@@ -159,42 +164,53 @@ export default function DealsPage() {
   };
 
   const fetchDeals = useCallback(() => {
+    const requestId = ++fetchRequestRef.current;
     setIsLoading(true);
     setLoadError(null);
     dealsApi.list({ search, page, limit: 20 })
       .then(async (res) => {
+        if (requestId !== fetchRequestRef.current) return;
         setDeals(res.items);
         setTotalItems(res.total || 0);
         setTotalPages(Math.max(res.totalPages || 1, 1));
+        setIsLoading(false);
 
         // Load priority and risk data if AI operational intelligence is enabled
         if (isAiOperationalIntelligenceEnabled && res.items.length > 0) {
           const priorities: Record<number, PriorityScore> = {};
           const risks: Record<number, RiskScore> = {};
+          let rateLimitHit = false;
 
-          await Promise.allSettled(
-            res.items.map(async (deal) => {
-              // Priority scoring not available for deals - API only supports leads
+          await runWithConcurrencyLimit(res.items, 2, async (deal) => {
+            if (requestId !== fetchRequestRef.current || rateLimitHit) return;
+            // Priority scoring not available for deals - API only supports leads
 
-              try {
-                // Load risk score
-                const riskData = await aiApi.getRiskScore('deal', deal.id);
-                risks[deal.id] = {
-                  risk: riskData.risk,
-                  reasons: riskData.reasons,
-                  score: riskData.score,
-                };
-              } catch (err) {
+            try {
+              const riskData = await aiApi.getRiskScore('deal', deal.id);
+              risks[deal.id] = {
+                risk: riskData.risk,
+                reasons: riskData.reasons,
+                score: riskData.score,
+              };
+            } catch (err) {
+              if (isAiRateLimitError(err)) {
+                rateLimitHit = true;
+              } else {
                 console.warn(`Failed to load risk for deal ${deal.id}:`, err);
               }
-            })
-          );
+            }
+          });
 
+          if (requestId !== fetchRequestRef.current) return;
           setDealPriorities(priorities);
           setDealRisks(risks);
+        } else {
+          setDealPriorities({});
+          setDealRisks({});
         }
       })
       .catch(() => {
+        if (requestId !== fetchRequestRef.current) return;
         setDeals([]);
         setTotalItems(0);
         setTotalPages(1);
@@ -207,7 +223,11 @@ export default function DealsPage() {
           variant: 'destructive',
         });
       })
-      .finally(() => setIsLoading(false));
+      .finally(() => {
+        if (requestId === fetchRequestRef.current) {
+          setIsLoading(false);
+        }
+      });
   }, [isAiOperationalIntelligenceEnabled, page, search, toast]);
 
   useEffect(() => { fetchDeals(); }, [fetchDeals]);
@@ -279,6 +299,11 @@ export default function DealsPage() {
     if (!shouldOpenCreate) return;
     setShowCreate(true);
   }, [shouldOpenCreate]);
+
+  const updateSearch = (value: string) => {
+    setSearch(value);
+    setPage(1);
+  };
 
   useEffect(() => {
     if (!showCreate) return;
@@ -464,7 +489,7 @@ export default function DealsPage() {
 
     // Special case: if current is lost, allow reopening to first stage
     if (stage === 'lost') {
-      const firstStage = stages.sort((a, b) => a.order - b.order)[0];
+      const firstStage = [...stages].sort((a, b) => a.order - b.order)[0];
       if (firstStage) {
         actions.push({ value: firstStage.key as DealPipelineStage, label: `Кайра ачуу: ${firstStage.label}` });
       }
@@ -536,55 +561,55 @@ export default function DealsPage() {
     ? [{
       key: 'search',
       label: `Издөө: ${search.trim()}`,
-      onRemove: () => setSearch(''),
+      onRemove: () => updateSearch(''),
     }]
     : [];
-  const headerActions = (
-    <div className="flex flex-wrap items-center gap-2">
-      <div className="hidden items-center gap-2 text-xs text-muted-foreground xl:flex">
-        <span className="rounded-full bg-secondary px-2.5 py-1">{totalItems} келишим</span>
-        <span className="rounded-full bg-secondary px-2.5 py-1">
-          {deals.filter((deal) => getDealPipelineStage(deal, tenantConfig.pipelineStages) === 'payment_pending').length} төлөм күтөт
-        </span>
-        <span className="rounded-full bg-secondary px-2.5 py-1">
-          {deals.filter((deal) => getDealPipelineStage(deal, tenantConfig.pipelineStages) === 'won').length} ийгиликтүү
-        </span>
-      </div>
-    </div>
-  );
 
   const renderMobileCard = (deal: Deal) => {
     const stage = getDealPipelineStage(deal, tenantConfig.pipelineStages);
     const quickActions = getDealQuickActions(deal);
 
     return (
-      <div className="rounded-2xl border bg-background p-4 shadow-sm">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="truncate font-semibold">{deal.contact?.fullName || '—'}</p>
+      <Card className="border-border/60 shadow-card">
+        <CardContent className="space-y-4 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate font-semibold">{deal.contact?.fullName || '—'}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Келишим #{deal.id}</p>
+            </div>
+            <StatusBadge variant={getLeadStatusVariant(stage)} dot>
+              {pipelineStageOptions.find(opt => opt.value === stage)?.label || ky.dealPipelineStage[stage]}
+            </StatusBadge>
           </div>
-          <StatusBadge variant={getLeadStatusVariant(stage)} dot>
-            {pipelineStageOptions.find(opt => opt.value === stage)?.label || ky.dealPipelineStage[stage]}
-          </StatusBadge>
-        </div>
 
-        <div className="mt-3 space-y-2 text-sm text-muted-foreground">
-          <p className="font-medium text-foreground">{deal.amount.toLocaleString()} {tenantConfig.currency}</p>
-          <p>{deal.notes || 'Кошумча эскертүү жок'}</p>
-        </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5">
+              <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">Сумма</p>
+              <p className="mt-1 text-sm font-semibold text-foreground">
+                {deal.amount.toLocaleString()} {tenantConfig.currency}
+              </p>
+            </div>
+            <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5">
+              <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">Байланыш</p>
+              <p className="mt-1 text-sm text-foreground">{deal.contact?.email || deal.contact?.fullName || 'Маалымат жок'}</p>
+            </div>
+          </div>
 
-        <div className="mt-3 flex items-center justify-between gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              navigate(`/deals/${deal.id}`);
-            }}
-          >
-            {ky.common.view}
-          </Button>
-          <div className="flex items-center gap-2">
+          {deal.notes ? (
+            <p className="rounded-xl bg-muted/50 p-3 text-sm text-muted-foreground line-clamp-3">{deal.notes}</p>
+          ) : null}
+
+          <div className="flex items-center justify-between gap-2 border-t border-border/60 pt-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate(`/deals/${deal.id}`);
+              }}
+            >
+              {ky.common.view}
+            </Button>
             <Button
               variant="ghost"
               size="icon"
@@ -598,48 +623,70 @@ export default function DealsPage() {
               <Trash2 className="h-4 w-4" />
             </Button>
           </div>
-        </div>
 
-        {quickActions.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-2 border-t pt-3">
-            {quickActions.map((action) => (
-              <Button
-                key={action.value}
-                variant="secondary"
-                size="sm"
-                disabled={updatingDealId === deal.id}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handlePipelineChange(deal, action.value);
-                }}
-              >
-                {updatingDealId === deal.id ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
-                {action.label}
-              </Button>
-            ))}
-          </div>
-        )}
-      </div>
+          {quickActions.length > 0 && (
+            <div className="flex flex-wrap gap-2 border-t border-border/60 pt-3">
+              {quickActions.map((action) => (
+                <Button
+                  key={action.value}
+                  variant="secondary"
+                  size="sm"
+                  disabled={updatingDealId === deal.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handlePipelineChange(deal, action.value);
+                  }}
+                >
+                  {updatingDealId === deal.id ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                  {action.label}
+                </Button>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     );
   };
 
   return (
-    <div className="space-y-4 animate-fade-in">
+    <div className="space-y-6 animate-fade-in">
       <PageHeader title={ky.deals.title} description="Келишимдерди баскычтан баскычка тез жылдырып, төлөмгө чейин жеткириңиз." actions={<Button onClick={() => setShowCreate(true)}><Plus className="mr-2 h-4 w-4" />{ky.deals.newDeal}</Button>} />
+      <div className="hidden rounded-2xl border border-border/60 bg-card p-4 shadow-card md:block">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_auto] xl:items-end">
+          <div className="space-y-1.5">
+            <Label className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">Издөө</Label>
+            <Input
+              value={search}
+              onChange={(e) => updateSearch(e.target.value)}
+              placeholder="Келишимди аты, телефон, email, сумма, ID же эскертүү менен издөө..."
+              className="h-10"
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="secondary" className="h-8 rounded-full px-3">{totalItems} келишим</Badge>
+            <Badge variant="secondary" className="h-8 rounded-full px-3">
+              {deals.filter((deal) => getDealPipelineStage(deal, tenantConfig.pipelineStages) === 'payment_pending').length} беттеги төлөм күтөт
+            </Badge>
+            <Badge variant="secondary" className="h-8 rounded-full px-3">
+              {deals.filter((deal) => getDealPipelineStage(deal, tenantConfig.pipelineStages) === 'won').length} беттеги ийгиликтүү
+            </Badge>
+          </div>
+        </div>
+      </div>
       <DataTable
         columns={columns}
         data={deals}
         isLoading={isLoading}
         errorMessage={loadError || undefined}
         onRetry={fetchDeals}
-        searchValue={search}
-        onSearchChange={setSearch}
+        searchValue={isMobile ? search : undefined}
+        onSearchChange={isMobile ? updateSearch : undefined}
         searchPlaceholder="Келишимди аты, телефон, email, сумма, ID же эскертүү менен издөө..."
         page={page}
         totalPages={totalPages}
         onPageChange={setPage}
-        headerActions={headerActions}
-        activeFilters={activeFilters}
+        headerActions={undefined}
+        activeFilters={isMobile ? activeFilters : undefined}
         totalItems={totalItems}
         totalItemsLabel="келишим"
         stickyHeader
@@ -649,16 +696,35 @@ export default function DealsPage() {
         getMobileBoardColumnId={(deal) => getDealPipelineStage(deal, tenantConfig.pipelineStages)}
         mobileBoardEmptyMessage="Бул этапта келишим жок"
       />
+      {activeFilters.length > 0 ? (
+        <div className="hidden md:block">
+          <div className="flex flex-wrap items-center gap-2">
+            {activeFilters.map((filter) => (
+              <Button key={filter.key} variant="secondary" size="sm" className="h-8 rounded-full px-3" onClick={filter.onRemove}>
+                {filter.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {/* Create Dialog */}
       <Dialog open={showCreate} onOpenChange={(open) => {
         setShowCreate(open);
         if (!open) clearPrefillParams();
       }}>
-        <DialogContent className="max-h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader><DialogTitle>{ky.deals.newDeal}</DialogTitle></DialogHeader>
-          <div className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
+        <DialogContent className="max-h-[calc(100vh-2rem)] sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{ky.deals.newDeal}</DialogTitle>
+            <DialogDescription>Келишимди ачып, дароо кийинки тапшырманы пландаңыз. Негизги талааларды биринчи толтуруу жетиштүү.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-5">
+            <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+              <div className="mb-4">
+                <p className="text-sm font-semibold text-foreground">Байланыш жана этап</p>
+                <p className="text-xs text-muted-foreground">Ким үчүн келишим ачылып жатканын жана ал кайсы этаптан башталарын тандаңыз.</p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>Лид</Label>
                 <Select value={form.leadId || '__none__'} onValueChange={(value) => setForm((prev) => ({ ...prev, leadId: value === '__none__' ? '' : value }))} disabled={contactsLoading}>
@@ -724,31 +790,44 @@ export default function DealsPage() {
                 </Select>
               </div>
             </div>
-            <div className="space-y-2">
-              <Label>{ky.common.notes}</Label>
-              <Input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Контекст же комментарий" />
+            </div>
+            <div className="rounded-2xl border border-border/60 p-4">
+              <div className="mb-4">
+                <p className="text-sm font-semibold text-foreground">Сумма жана контекст</p>
+                <p className="text-xs text-muted-foreground">Төлөм жана сүйлөшүү үчүн керектүү негизги маалымат.</p>
+              </div>
+              <div className="space-y-2">
+                <Label>{ky.common.notes}</Label>
+                <Input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Контекст же комментарий" />
+              </div>
             </div>
             {isLmsBridgeEnabled ? (
-              <LmsCourseContextFields
-                value={{
-                  lmsCourseId: form.lmsCourseId,
-                  lmsGroupId: form.lmsGroupId,
-                  courseType: form.courseType,
-                  courseNameSnapshot: form.courseNameSnapshot,
-                  groupNameSnapshot: form.groupNameSnapshot,
-                }}
-                onChange={(next) => setForm((prev) => ({
-                  ...prev,
-                  lmsCourseId: next.lmsCourseId,
-                  lmsGroupId: next.lmsGroupId,
-                  courseType: next.courseType,
-                  courseNameSnapshot: next.courseNameSnapshot,
-                  groupNameSnapshot: next.groupNameSnapshot,
-                }))}
-                courseLabel="Курс"
-                groupLabel="Группа"
-                description="Эгер лид же сыноо сабагы тандалса, бул бөлүктү бош калтырсаңыз система алардын окуу тандоосун колдонот."
-              />
+              <div className="rounded-2xl border border-border/60 p-4">
+                <div className="mb-4">
+                  <p className="text-sm font-semibold text-foreground">Окуу байланышы</p>
+                  <p className="text-xs text-muted-foreground">Курс же группа тандалса, enrollment жана төлөм контексти алдын ала толукталат.</p>
+                </div>
+                <LmsCourseContextFields
+                  value={{
+                    lmsCourseId: form.lmsCourseId,
+                    lmsGroupId: form.lmsGroupId,
+                    courseType: form.courseType,
+                    courseNameSnapshot: form.courseNameSnapshot,
+                    groupNameSnapshot: form.groupNameSnapshot,
+                  }}
+                  onChange={(next) => setForm((prev) => ({
+                    ...prev,
+                    lmsCourseId: next.lmsCourseId,
+                    lmsGroupId: next.lmsGroupId,
+                    courseType: next.courseType,
+                    courseNameSnapshot: next.courseNameSnapshot,
+                    groupNameSnapshot: next.groupNameSnapshot,
+                  }))}
+                  courseLabel="Курс"
+                  groupLabel="Группа"
+                  description="Эгер лид же сыноо сабагы тандалса, бул бөлүктү бош калтырсаңыз система алардын окуу тандоосун колдонот."
+                />
+              </div>
             ) : null}
             <div className="space-y-4 rounded-lg border border-border/60 p-4">
               <div>
@@ -769,7 +848,7 @@ export default function DealsPage() {
               </div>
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="border-t border-border/60 pt-4">
             <Button variant="outline" onClick={resetCreateForm}>{ky.common.cancel}</Button>
             <Button onClick={handleCreate} disabled={isCreating || !form.contactId || !form.amount || !form.initialTaskTitle.trim()}>
               {isCreating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -784,9 +863,9 @@ export default function DealsPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{ky.deals.deleteConfirmTitle}</AlertDialogTitle>
-            <AlertDialogDescription>{ky.deals.deleteConfirmDesc}</AlertDialogDescription>
+            <AlertDialogDescription>{ky.deals.deleteConfirmDesc} Төлөм жана тарых байланыштарын да кайра карап чыгуу керек болот.</AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
+          <AlertDialogFooter className="border-t border-border/60 pt-4">
             <AlertDialogCancel disabled={isDeleting}>{ky.common.cancel}</AlertDialogCancel>
             <AlertDialogAction onClick={handleDelete} disabled={isDeleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               {ky.common.delete}

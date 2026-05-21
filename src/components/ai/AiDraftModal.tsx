@@ -8,6 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogFooter,
+  DialogDescription,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -111,7 +112,7 @@ export function AiDraftModal({
         title: 'Сунуш даяр болду',
         description: 'AI жооптун текстин сунуштап берди',
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       const errorInfo = getAiErrorMessage(err, {
         fallbackTitle: 'Сунушту даярдоодо ката кетти',
         fallbackDescription: 'AI жооп сунушун даярдоодо ката кетти. Бир аздан кийин кайра аракет кылыңыз.',
@@ -189,14 +190,15 @@ export function AiDraftModal({
             <Sparkles className="h-5 w-5 text-orange-500" />
             AI менен follow-up билдирүү даярдоо
           </DialogTitle>
+          <DialogDescription>AI учурдагы контекстке жараша жооп сунуштайт. Колдонордон мурун текстти карап, кааласаңыз түзөтүңүз.</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6">
           {/* Target Information */}
-          <div className="bg-muted/50 rounded-lg p-4">
+          <div className="rounded-2xl border border-border/60 bg-muted/40 p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium">{targetTypeLabel}</p>
+                <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{targetTypeLabel}</p>
                 <p className="text-lg font-semibold">{targetName}</p>
               </div>
             </div>
@@ -204,46 +206,54 @@ export function AiDraftModal({
 
           {/* Draft Request Form */}
           {!draft && !isGenerating && (
-            <form onSubmit={form.handleSubmit(handleGenerateDraft)} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="tone">Жооптун стили *</Label>
-                <Select
-                  value={form.watch('tone')}
-                  onValueChange={(value) => form.setValue('tone', value as DraftRequestForm['tone'])}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Тонду тандаңыз" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {toneOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {form.formState.errors.tone && (
-                  <p className="text-sm text-destructive">{form.formState.errors.tone.message}</p>
-                )}
+            <form onSubmit={form.handleSubmit(handleGenerateDraft)} className="space-y-5">
+              <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+                <div className="mb-4">
+                  <p className="text-sm font-semibold text-foreground">Сурам параметрлери</p>
+                  <p className="text-xs text-muted-foreground">Тонду жана керек болсо кошумча көрсөтмөнү тандаңыз.</p>
+                </div>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="tone">Жооптун стили *</Label>
+                    <Select
+                      value={form.watch('tone')}
+                      onValueChange={(value) => form.setValue('tone', value as DraftRequestForm['tone'])}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Тонду тандаңыз" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {toneOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {form.formState.errors.tone && (
+                      <p className="text-sm text-destructive">{form.formState.errors.tone.message}</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="instructions">Кошумча көрсөтмө (милдеттүү эмес)</Label>
+                    <Textarea
+                      id="instructions"
+                      placeholder="Мисалы: кыска жазыңыз же курс тууралуу кененирээк маалымат кошуңуз"
+                      className="min-h-[100px]"
+                      {...form.register('instructions')}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Максимум 2000 символ
+                    </p>
+                    {form.formState.errors.instructions && (
+                      <p className="text-sm text-destructive">{form.formState.errors.instructions.message}</p>
+                    )}
+                  </div>
+                </div>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="instructions">Кошумча көрсөтмө (милдеттүү эмес)</Label>
-                <Textarea
-                  id="instructions"
-                  placeholder="Мисалы: кыска жазыңыз же курс тууралуу кененирээк маалымат кошуңуз"
-                  className="min-h-[100px]"
-                  {...form.register('instructions')}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Максимум 2000 символ
-                </p>
-                {form.formState.errors.instructions && (
-                  <p className="text-sm text-destructive">{form.formState.errors.instructions.message}</p>
-                )}
-              </div>
-
-              <DialogFooter>
+              <DialogFooter className="border-t border-border/60 pt-4">
                 <Button
                   type="button"
                   variant="outline"
@@ -405,7 +415,7 @@ export function AiDraftModal({
                 )}
               </div>
 
-              <DialogFooter className="flex gap-2">
+              <DialogFooter className="border-t border-border/60 pt-4">
                 <Button
                   variant="outline"
                   onClick={handleDismiss}

@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { PageHeader } from '@/components/PageShell';
+import { PageError, PageHeader, PageLoading } from '@/components/PageShell';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Loader2, ArrowLeft, CreditCard, Workflow, Pencil, Sparkles, MoreHorizontal } from 'lucide-react';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Loader2, ArrowLeft, CreditCard, Workflow, Pencil, Sparkles, MoreHorizontal, Phone, Mail, Calendar, User } from 'lucide-react';
 import { contactApi, dealsApi, paymentsApi, bridgeApi } from '@/api/modules';
 import type { Contact, Deal, Lead, Payment } from '@/types';
 import type { ContactWithStudentMapping } from '@/types/bridge';
@@ -327,17 +327,14 @@ export default function DealDetailPage() {
   };
 
   if (isLoading) {
-    return <div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>;
+    return <PageLoading />;
   }
 
   if (error || !deal) {
     return (
-      <div className="flex h-64 flex-col items-center justify-center gap-4">
-        <p className="text-muted-foreground">{error || 'Келишим табылган жок'}</p>
-        <Button variant="outline" onClick={() => navigate('/deals')}>
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Артка
-        </Button>
+      <div className="space-y-6 animate-fade-in">
+        <PageHeader title="Келишим" actions={<Button variant="outline" onClick={() => navigate('/deals')}><ArrowLeft className="mr-2 h-4 w-4" />Артка</Button>} />
+        <PageError message={error || 'Келишим табылган жок'} onRetry={() => navigate('/deals')} actionLabel="Тизмеге кайтуу" />
       </div>
     );
   }
@@ -380,7 +377,7 @@ export default function DealDetailPage() {
     <div className="space-y-6 animate-fade-in">
       <PageHeader
         title={`Келишим #${deal.id}`}
-        description={isLmsBridgeEnabled ? (deal.lmsMapping?.courseNameSnapshot || 'Окуу байланышы көрсөтүлгөн эмес') : undefined}
+        description={contact?.fullName || (isLmsBridgeEnabled ? (deal.lmsMapping?.courseNameSnapshot || 'Окуу байланышы көрсөтүлгөн эмес') : undefined)}
         actions={
           <div className="flex w-full items-center justify-between gap-2 sm:flex-wrap sm:justify-end">
             <div className="flex items-center gap-2 sm:hidden">
@@ -388,11 +385,9 @@ export default function DealDetailPage() {
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 Артка
               </Button>
-              {isLmsBridgeEnabled ? (
-                <Button className="h-9" variant="outline" onClick={() => setEditOpen(true)}>
-                  {ky.common.edit}
-                </Button>
-              ) : null}
+              <Button className="h-9" onClick={() => navigate(`/payments?create=1&dealId=${deal.id}`)}>
+                Төлөм кошуу
+              </Button>
             </div>
 
             <DropdownMenu>
@@ -410,6 +405,11 @@ export default function DealDetailPage() {
                 <DropdownMenuItem onClick={() => navigate(`/payments?create=1&dealId=${deal.id}`)}>
                   Төлөм кошуу
                 </DropdownMenuItem>
+                {isLmsBridgeEnabled ? (
+                  <DropdownMenuItem onClick={() => setEditOpen(true)}>
+                    Продукт маалыматты оңдоо
+                  </DropdownMenuItem>
+                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
 
@@ -418,60 +418,137 @@ export default function DealDetailPage() {
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 Артка
               </Button>
-              {isAiDraftsEnabled ? (
-                <Button className="h-9" variant="outline" onClick={() => setIsAiDraftOpen(true)}>
-                  <Sparkles className="mr-2 h-4 w-4" />
-                  AI жооп сунушу
-                </Button>
-              ) : null}
-              <Button className="h-9" variant="outline" onClick={() => navigate(`/payments?create=1&dealId=${deal.id}`)}>
+              <Button className="h-9" onClick={() => navigate(`/payments?create=1&dealId=${deal.id}`)}>
                 Төлөм кошуу
               </Button>
-              {isLmsBridgeEnabled ? (
-                <Button className="h-9" variant="outline" onClick={() => setEditOpen(true)}>
-                  <Pencil className="mr-2 h-4 w-4" />
-                  Продукт маалыматты оңдоо
-                </Button>
-              ) : null}
+              <div className="ml-1 flex items-center gap-2 rounded-full border border-border/70 bg-muted/20 px-2 py-1">
+                {isAiDraftsEnabled ? (
+                  <Button className="h-8" variant="ghost" onClick={() => setIsAiDraftOpen(true)}>
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    AI жооп сунушу
+                  </Button>
+                ) : null}
+                {isLmsBridgeEnabled ? (
+                  <Button className="h-8" variant="ghost" onClick={() => setEditOpen(true)}>
+                    <Pencil className="mr-2 h-4 w-4" />
+                    Продукт маалыматты оңдоо
+                  </Button>
+                ) : null}
+              </div>
             </div>
           </div>
         }
       />
+      <Card className="border-border/60 bg-card shadow-card">
+        <CardContent className="p-5">
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
+                  {ky.dealPipelineStage[deal.pipelineStage] || deal.pipelineStage}
+                </Badge>
+                {paymentSummary ? (
+                  <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
+                    Калганы: {paymentSummary.remaining.toLocaleString()} сом
+                  </Badge>
+                ) : null}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <SummaryStat label="Сумма" value={`${deal.amount.toLocaleString()} ${deal.currency || 'KGS'}`} icon={CreditCard} />
+                <SummaryStat label="Байланыш" value={contact?.fullName || 'Байланыш жок'} icon={User} />
+                <SummaryStat label="Түзүлгөн күнү" value={formatDate(deal.createdAt)} icon={Calendar} />
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+              <ActionTile
+                label="Төлөм кошуу"
+                value="Төлөмдү дароо каттоо"
+                onClick={() => navigate(`/payments?create=1&dealId=${deal.id}`)}
+                icon={CreditCard}
+              />
+              <ActionTile
+                label={ky.common.phone}
+                value={contact?.phone || 'Телефон жок'}
+                href={contact?.phone ? `tel:${contact.phone}` : undefined}
+                icon={Phone}
+                muted={!contact?.phone}
+              />
+              <ActionTile
+                label={ky.common.email}
+                value={contact?.email || 'Email жок'}
+                href={contact?.email ? `mailto:${contact.email}` : undefined}
+                icon={Mail}
+                muted={!contact?.email}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
-      <div className="grid items-start gap-6 lg:grid-cols-3">
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(320px,1fr)]">
         {aiDraftMessage ? (
           <AiDraftHandoffCard
             value={aiDraftMessage}
             onChange={setAiDraftMessage}
             onClear={() => setAiDraftMessage('')}
-            className="lg:col-span-3"
+            className="xl:col-span-2"
           />
         ) : null}
 
-        {/* Release 2 - Operational Intelligence Components */}
-        {isAiOperationalIntelligenceEnabled && (
-          <div className="space-y-4 lg:col-span-3">
-            {/* Priority and Risk Indicators */}
-            {(priorityScore || riskScore) && (
-              <Card className="shadow-card border-border/50">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Sparkles className="w-4 h-4 text-orange-500" />
-                    AI анализ
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <PriorityIndicator
-                    priority={priorityScore}
-                    risk={riskScore}
-                    showDetails={true}
-                  />
-                </CardContent>
-              </Card>
-            )}
+        <div className="space-y-6">
+          <Card className="shadow-card border-border/50">
+            <CardHeader>
+              <CardTitle className="text-base">Келишим маалыматы</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <InfoRow icon={User} label="Байланыш" value={contact?.fullName || '—'} />
+                <InfoRow icon={CreditCard} label="Сумма" value={`${deal.amount.toLocaleString()} ${deal.currency || 'KGS'}`} />
+                <InfoRow icon={Phone} label={ky.common.phone} value={contact?.phone || '—'} />
+                <InfoRow icon={Mail} label={ky.common.email} value={contact?.email || '—'} />
+              </div>
+              {deal.notes ? (
+                <div className="rounded-xl bg-muted/45 p-3 text-sm text-muted-foreground">{deal.notes}</div>
+              ) : (
+                <p className="text-sm text-muted-foreground">Кошумча эскертүү жок.</p>
+              )}
+            </CardContent>
+          </Card>
 
-            {/* Next Best Action */}
-            <div className="space-y-4">
+          {isLmsBridgeEnabled && deal.lmsMapping ? (
+            <DealCourseMapping
+              lmsCourseId={deal.lmsMapping.lmsCourseId}
+              lmsGroupId={deal.lmsMapping.lmsGroupId}
+              courseType={deal.lmsMapping.courseType}
+              courseNameSnapshot={deal.lmsMapping.courseNameSnapshot}
+              groupNameSnapshot={deal.lmsMapping.groupNameSnapshot}
+              dealId={deal.id}
+              contactLmsStudentId={contactBridgeData?.lmsStudentId}
+            />
+          ) : null}
+        </div>
+
+        <div className="space-y-4 xl:sticky xl:top-6">
+          {isAiOperationalIntelligenceEnabled && (
+            <>
+              {(priorityScore || riskScore) && (
+                <Card className="shadow-card border-border/50">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Sparkles className="h-4 w-4 text-orange-500" />
+                      AI анализ
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <PriorityIndicator
+                      priority={priorityScore}
+                      risk={riskScore}
+                      showDetails={true}
+                    />
+                  </CardContent>
+                </Card>
+              )}
+
               <NextBestActionCard
                 action={nextBestAction}
                 targetType="deal"
@@ -490,78 +567,62 @@ export default function DealDetailPage() {
                   onFeedbackSubmit={handleAiFeedback}
                 />
               )}
-            </div>
 
-            <CommunicationSummary
-              summary={communicationSummary || undefined}
-              targetType="deal"
-              targetId={Number(deal.id)}
-              onRefresh={refreshIntelligenceData}
-              loading={intelligenceLoading && !communicationSummary}
-              error={intelligenceError}
-            />
-            {communicationSummary?.aiRequestId && (
-              <AiFeedbackControls
+              <CommunicationSummary
+                summary={communicationSummary || undefined}
                 targetType="deal"
                 targetId={Number(deal.id)}
-                feature="timeline_summary"
-                aiRequestId={communicationSummary.aiRequestId}
-                disabled={intelligenceLoading}
-                onFeedbackSubmit={handleAiFeedback}
+                onRefresh={refreshIntelligenceData}
+                loading={intelligenceLoading && !communicationSummary}
+                error={intelligenceError}
               />
-            )}
+              {communicationSummary?.aiRequestId && (
+                <AiFeedbackControls
+                  targetType="deal"
+                  targetId={Number(deal.id)}
+                  feature="timeline_summary"
+                  aiRequestId={communicationSummary.aiRequestId}
+                  disabled={intelligenceLoading}
+                  onFeedbackSubmit={handleAiFeedback}
+                />
+              )}
 
-            {/* Extraction Suggestions */}
-            {extractionSuggestions && (
-              <Card className="shadow-card border-border/50">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Sparkles className="w-4 h-4 text-orange-500" />
-                    AI сунуштары
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    <p className="text-sm text-muted-foreground">
-                      AI тарабынан {extractionSuggestions.suggestions.length} өзгөртүү сунушталды
-                    </p>
-                    <Button
-                      onClick={() => setIsSuggestionReviewOpen(true)}
-                      variant="outline"
-                      size="sm"
-                    >
-                      Сунуштарды кароо
-                    </Button>
-                    {extractionSuggestions.aiRequestId && (
-                      <AiFeedbackControls
-                        targetType="deal"
-                        targetId={Number(deal.id)}
-                        feature="extraction"
-                        aiRequestId={extractionSuggestions.aiRequestId}
-                        disabled={intelligenceLoading}
-                        onFeedbackSubmit={handleAiFeedback}
-                      />
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        )}
-
-        {isLmsBridgeEnabled && deal.lmsMapping ? (
-          <DealCourseMapping
-            lmsCourseId={deal.lmsMapping.lmsCourseId}
-            lmsGroupId={deal.lmsMapping.lmsGroupId}
-            courseType={deal.lmsMapping.courseType}
-            courseNameSnapshot={deal.lmsMapping.courseNameSnapshot}
-            groupNameSnapshot={deal.lmsMapping.groupNameSnapshot}
-            dealId={deal.id}
-            contactLmsStudentId={contactBridgeData?.lmsStudentId}
-          />
-        ) : null}
-
-        <div className="space-y-4 lg:col-span-1">
+              {extractionSuggestions && (
+                <Card className="shadow-card border-border/50">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Sparkles className="h-4 w-4 text-orange-500" />
+                      AI сунуштары
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3">
+                      <p className="text-sm text-muted-foreground">
+                        AI тарабынан {extractionSuggestions.suggestions.length} өзгөртүү сунушталды
+                      </p>
+                      <Button
+                        onClick={() => setIsSuggestionReviewOpen(true)}
+                        variant="outline"
+                        size="sm"
+                      >
+                        Сунуштарды кароо
+                      </Button>
+                      {extractionSuggestions.aiRequestId && (
+                        <AiFeedbackControls
+                          targetType="deal"
+                          targetId={Number(deal.id)}
+                          feature="extraction"
+                          aiRequestId={extractionSuggestions.aiRequestId}
+                          disabled={intelligenceLoading}
+                          onFeedbackSubmit={handleAiFeedback}
+                        />
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </>
+          )}
           <Card className="shadow-card border-border/50">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
@@ -641,24 +702,27 @@ export default function DealDetailPage() {
       </div>
 
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="max-h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] overflow-y-auto sm:max-w-lg">
+        <DialogContent className="max-h-[calc(100vh-2rem)] sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Окуу маалыматын оңдоо</DialogTitle>
+            <DialogDescription>Келишим ушул курс жана группа менен байланышат. Төлөм жана enrollment логикасы ушул маалыматка таянат.</DialogDescription>
           </DialogHeader>
-          <LmsCourseContextFields
-            value={{
-              lmsCourseId: editForm.lmsCourseId,
-              lmsGroupId: editForm.lmsGroupId,
-              courseType: editForm.courseType,
-              courseNameSnapshot: editForm.courseNameSnapshot,
-              groupNameSnapshot: editForm.groupNameSnapshot,
-            }}
-            onChange={(next) => setEditForm(next)}
-            courseLabel="Курс"
-            groupLabel="Группа"
-            description="Келишимдеги акыркы окуу тандоосу ушул жерде сакталат. Төлөм жана enrollment ушул мааниге таянат."
-          />
-          <DialogFooter>
+          <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+            <LmsCourseContextFields
+              value={{
+                lmsCourseId: editForm.lmsCourseId,
+                lmsGroupId: editForm.lmsGroupId,
+                courseType: editForm.courseType,
+                courseNameSnapshot: editForm.courseNameSnapshot,
+                groupNameSnapshot: editForm.groupNameSnapshot,
+              }}
+              onChange={(next) => setEditForm(next)}
+              courseLabel="Курс"
+              groupLabel="Группа"
+              description="Келишимдеги акыркы окуу тандоосу ушул жерде сакталат. Төлөм жана enrollment ушул мааниге таянат."
+            />
+          </div>
+          <DialogFooter className="border-t border-border/60 pt-4">
             <Button variant="outline" onClick={() => setEditOpen(false)}>
               Жабуу
             </Button>
@@ -691,6 +755,90 @@ export default function DealDetailPage() {
           error={intelligenceError}
         />
       )}
+    </div>
+  );
+}
+
+function SummaryStat({
+  label,
+  value,
+  icon: Icon,
+}: {
+  label: string;
+  value: string;
+  icon: typeof CreditCard;
+}) {
+  return (
+    <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-3">
+      <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+        <Icon className="h-3.5 w-3.5" />
+        <span>{label}</span>
+      </div>
+      <p className="mt-2 text-sm font-semibold text-foreground">{value}</p>
+    </div>
+  );
+}
+
+function ActionTile({
+  label,
+  value,
+  href,
+  onClick,
+  icon: Icon,
+  muted = false,
+}: {
+  label: string;
+  value: string;
+  href?: string;
+  onClick?: () => void;
+  icon: typeof CreditCard;
+  muted?: boolean;
+}) {
+  const classes = `flex items-start gap-3 rounded-xl border border-border/60 p-3 text-left transition-colors ${
+    muted ? 'bg-muted/25 text-muted-foreground' : 'bg-background hover:bg-muted/40'
+  }`;
+
+  const content = (
+    <>
+      <span className="mt-0.5 rounded-lg bg-muted/70 p-2">
+        <Icon className="h-4 w-4" />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{label}</span>
+        <span className="mt-1 block truncate text-sm font-medium text-foreground">{value}</span>
+      </span>
+    </>
+  );
+
+  if (href && !muted) {
+    return <a href={href} className={classes}>{content}</a>;
+  }
+
+  if (onClick && !muted) {
+    return <button type="button" onClick={onClick} className={classes}>{content}</button>;
+  }
+
+  return <div className={classes}>{content}</div>;
+}
+
+function InfoRow({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: typeof CreditCard;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="flex items-start gap-3 rounded-xl border border-border/60 bg-background/80 px-3 py-3">
+      <span className="rounded-lg bg-muted/70 p-2">
+        <Icon className="h-4 w-4 text-muted-foreground" />
+      </span>
+      <div className="min-w-0">
+        <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
+        <p className="mt-1 text-sm font-medium text-foreground">{value}</p>
+      </div>
     </div>
   );
 }
